@@ -252,7 +252,7 @@ Para garantir que seus dados estejam seguros e acessíveis, o instalador configu
 
 | Volume | Caminho no Container | Caminho no Host (Produção/Setup) | Caminho Local (Dev/Manual) |
 |--------|----------------------|----------------------------------|----------------------------|
-| `openclaw_config` | `/home/openclaw/.openclaw` | `/root/openclaw/config` | `./data/config` |
+| `openclaw_config` | `/home/openclaw/.openclaw` | `/root/openclaw/.openclaw` | `./data/config` |
 | `openclaw_workspace` | `/home/openclaw/workspace` | `/root/openclaw/workspace` | `./data/workspace` |
 | `./skills` (Bind) | `/home/openclaw/workspace/skills` | `/opt/openclaw/skills` | `./skills` |
 

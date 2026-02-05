@@ -78,7 +78,7 @@ prepare_persistence() {
     log_info "Configurando diretórios de persistência em /root/openclaw..."
     
     # Cria diretórios no host
-    mkdir -p /root/openclaw/config
+    mkdir -p /root/openclaw/.openclaw
     mkdir -p /root/openclaw/workspace
     
     # Ajusta permissões para o usuário do container (UID 1000)
@@ -154,7 +154,7 @@ $middleware_config
         # - "traefik.http.routers.openclaw.entrypoints=websecure"
         # - "traefik.http.routers.openclaw.tls=true"
     volumes:
-      - /root/openclaw/config:/home/openclaw/.openclaw
+      - /root/openclaw/.openclaw:/home/openclaw/.openclaw
       - /root/openclaw/workspace:/home/openclaw/workspace
       # - /root/openclaw/home:/home/openclaw
       - ./skills:/home/openclaw/workspace/skills
@@ -400,7 +400,7 @@ setup_openclaw() {
     log_info "Baixando imagem oficial e iniciando containers (Standalone)..."
     
     # Define variáveis para o docker-compose.yml usar paths do host
-    export OPENCLAW_CONFIG_PATH="/root/openclaw/config"
+    export OPENCLAW_CONFIG_PATH="/root/openclaw/.openclaw"
     export OPENCLAW_WORKSPACE_PATH="/root/openclaw/workspace"
     
     docker compose pull
@@ -494,6 +494,9 @@ cleanup_vps() {
     # 3. Remover Volumes (Forçar limpeza)
     log_info "Removendo volumes persistentes..."
     docker volume rm openclaw_config openclaw_workspace openclaw_home 2>/dev/null || true
+
+    # Opcional: Remover diretórios do host
+    # rm -rf /root/openclaw/.openclaw /root/openclaw/workspace
 
     # 4. Remover Diretório
     if [ -d "$INSTALL_DIR" ]; then
