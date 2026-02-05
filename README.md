@@ -41,6 +41,8 @@ Acesse seu servidor via SSH como `root` e execute o comando abaixo:
 curl -sL https://raw.githubusercontent.com/alltomatos/openclaw-docker/main/SetupOpenclaw.sh -o SetupOpenclaw.sh && chmod +x SetupOpenclaw.sh && ./SetupOpenclaw.sh
 ```
 
+![Setup OpenClaw Menu](./imagem/setup.png)
+
 Siga as instruções do menu interativo. O script detectará automaticamente se é necessário instalar a infraestrutura e guiará você passo-a-passo. Você poderá escolher entre o modo **Cluster (Swarm + Traefik)** ou **Standalone (Docker Puro)**.
 
 > **Nota:** Se o script detectar um cluster Swarm com Traefik, ele oferecerá a opção de configurar o OpenClaw como um serviço replicado e acessível via domínio (ex: `openclaw.app.localhost`).
@@ -72,6 +74,8 @@ Se for a primeira vez, você precisará configurar suas chaves de API (LLM) e ca
 ```bash
 docker compose exec openclaw openclaw onboard
 ```
+
+![OpenClaw Container Terminal](./imagem/container.png)
 
 ---
 
