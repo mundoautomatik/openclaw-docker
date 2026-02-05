@@ -280,6 +280,27 @@ setup_openclaw() {
     fi
 }
 
+# --- Acesso ao Shell ---
+
+enter_shell() {
+    log_info "Tentando acessar o shell do container OpenClaw..."
+    
+    # Tenta encontrar container local (funciona para Standalone e Swarm se estiver no node atual)
+    # Filtra por nome que contenha 'openclaw' (ex: openclaw-openclaw-1 ou openclaw_openclaw.1.xxx)
+    local container_id=$(docker ps --filter "name=openclaw" --format "{{.ID}}" | head -n 1)
+    
+    if [ -n "$container_id" ]; then
+        log_info "Container encontrado: $container_id"
+        echo -e "${VERDE}Acessando container... Digite 'exit' para sair.${RESET}"
+        
+        # Tenta bash, se falhar tenta sh
+        docker exec -it "$container_id" /bin/bash || docker exec -it "$container_id" /bin/sh
+    else
+        log_error "Nenhum container do OpenClaw encontrado em execução neste nó."
+        echo -e "${AMARELO}Se estiver usando Swarm em múltiplos nós, o container pode estar em outro servidor.${RESET}"
+    fi
+}
+
 # --- Limpeza ---
 
 cleanup_vps() {
@@ -342,7 +363,8 @@ menu() {
         echo -e "${VERDE}1${BRANCO} - Instalar/Atualizar OpenClaw (Completo)${RESET}"
         echo -e "${VERDE}2${BRANCO} - Apenas Instalar Docker${RESET}"
         echo -e "${VERDE}3${BRANCO} - Ver Logs do OpenClaw${RESET}"
-        echo -e "${VERMELHO}4${BRANCO} - Limpar VPS (Remover OpenClaw)${RESET}"
+        echo -e "${VERDE}4${BRANCO} - Acessar Terminal do Container${RESET}"
+        echo -e "${VERMELHO}5${BRANCO} - Limpar VPS (Remover OpenClaw)${RESET}"
         echo -e "${VERDE}0${BRANCO} - Sair${RESET}"
         echo ""
         echo -en "${AMARELO}Opção: ${RESET}"
@@ -372,6 +394,10 @@ menu() {
                 fi
                 ;;
             4)
+                enter_shell
+                read -p "Pressione ENTER para continuar..."
+                ;;
+            5)
                 check_root
                 cleanup_vps
                 read -p "Pressione ENTER para continuar..."
