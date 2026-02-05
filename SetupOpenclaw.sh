@@ -139,10 +139,20 @@ $middleware_config
         # Opcional: Se usar HTTPS/TLS
         # - "traefik.http.routers.openclaw.entrypoints=websecure"
         # - "traefik.http.routers.openclaw.tls=true"
+    volumes:
+      - openclaw_config:/home/openclaw/.openclaw
+      - openclaw_workspace:/home/openclaw/workspace
+      - openclaw_home:/home/openclaw
+      - ./skills:/home/openclaw/workspace/skills
 
 networks:
   $network_name:
     external: true
+
+volumes:
+  openclaw_config:
+  openclaw_workspace:
+  openclaw_home:
 EOF
 }
 
