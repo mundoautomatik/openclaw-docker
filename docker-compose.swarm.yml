@@ -12,7 +12,6 @@ services:
         - "traefik.http.routers.openclaw.rule=Host(`${DOMAIN:-openclaw.app.localhost}`)"
         - "traefik.http.routers.openclaw.entrypoints=web"
         - "traefik.http.services.openclaw.loadbalancer.server.port=18789"
-        
         # --- Autenticação (Basic Auth) ---
         # Substitua o hash abaixo pelo seu. Gerar com: htpasswd -nb admin seu_token
         # Exemplo (admin:token123):
