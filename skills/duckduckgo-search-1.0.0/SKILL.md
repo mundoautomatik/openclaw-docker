@@ -61,7 +61,7 @@ query = 'sua consulta de pesquisa'
 with DDGS() as ddgs:
     results = list(ddgs.text(
         query,
-        region='cn-zh',      # Configuração de região: cn-zh(China), us-en(EUA), wt-wt(Global)
+        region='wt-wt',      # Configuração de região: cn-zh(China), us-en(EUA), wt-wt(Global)
         safesearch='moderate', # Pesquisa segura: on, moderate, off
         timelimit='m',       # Intervalo de tempo: d(dia), w(semana), m(mês), y(ano), None(sem limite)
         max_results=10       # Número máximo de resultados
