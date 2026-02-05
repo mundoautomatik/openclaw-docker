@@ -26,25 +26,41 @@ for skill_path in "$SKILLS_DIR"/*; do
     if [ -d "$skill_path" ]; then
         SKILL_NAME=$(basename "$skill_path")
         
-        # Check for package.json
+        # 1. Handle Node.js Skills (package.json)
         if [ -f "$skill_path/package.json" ]; then
             # Check if node_modules exists
             if [ ! -d "$skill_path/node_modules" ]; then
-                log "New skill detected: $SKILL_NAME. Installing dependencies..."
+                log "New Node.js skill detected: $SKILL_NAME. Installing dependencies..."
                 
                 cd "$skill_path" || continue
                 
                 if npm install >> "$LOG_FILE" 2>&1; then
-                    log "Dependencies installed for $SKILL_NAME"
+                    log "Node dependencies installed for $SKILL_NAME"
                     CHANGES_DETECTED=true
                 else
-                    log "Failed to install dependencies for $SKILL_NAME"
+                    log "Failed to install Node dependencies for $SKILL_NAME"
                 fi
-            else
-                # Optional: Check if package.json is newer than node_modules
-                # For now, we assume if node_modules exists, it's fine.
-                # Use a flag file or similar logic for updates if needed.
-                :
+            fi
+        fi
+
+        # 2. Handle Python Skills (requirements.txt)
+        if [ -f "$skill_path/requirements.txt" ]; then
+            # We use a flag file to know if we already installed pip deps for this folder
+            # Since python packages are installed globally (or user level), we can't just check a folder inside
+            INSTALLED_FLAG="$skill_path/.pip_installed"
+            
+            if [ ! -f "$INSTALLED_FLAG" ]; then
+                log "New Python skill detected: $SKILL_NAME. Installing dependencies..."
+                
+                # We use --break-system-packages if needed, or install to user level
+                # Since we are the 'openclaw' user, --user is safer and standard
+                if pip install --user -r "$skill_path/requirements.txt" >> "$LOG_FILE" 2>&1; then
+                    log "Python dependencies installed for $SKILL_NAME"
+                    touch "$INSTALLED_FLAG"
+                    CHANGES_DETECTED=true
+                else
+                    log "Failed to install Python dependencies for $SKILL_NAME"
+                fi
             fi
         fi
     fi
