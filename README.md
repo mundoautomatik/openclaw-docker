@@ -35,37 +35,45 @@ docker compose exec openclaw openclaw onboard
 
 ## 🧠 Gerenciamento de Skills
 
-Este ambiente possui um sistema avançado para gerenciamento de capacidades (Skills).
+Este ambiente possui um sistema avançado e automatizado para gerenciamento de capacidades (Skills), permitindo estender o OpenClaw com novas funcionalidades.
+
+### Skills Suportadas
+O sistema de **Auto-Reload** detecta e instala dependências automaticamente para:
+- **Node.js**: Projetos com `package.json` (instala via `npm install`).
+- **Python**: Projetos com `requirements.txt` (instala via `pip install --user`).
+
+### Skills Pré-instaladas
+- **DuckDuckGo Search**: Permite que o agente realize pesquisas na web anônimas (texto, imagens, notícias) sem necessidade de API Key. Documentação completa em `./skills/duckduckgo-search-1.0.0/SKILL.md`.
 
 ### Como adicionar uma nova Skill
 
 1.  **Clone a skill** para a pasta `./skills` na raiz deste projeto.
-    Use o script facilitador para fazer isso de forma segura:
+    Use o script facilitador para fazer isso de forma segura e organizada:
     ```bash
     ./add_skill.sh https://github.com/usuario/repo-da-skill
     ```
 
 2.  **Ativação**:
-    *   **Opção A (Automática)**: Aguarde até às 03:00 AM. O sistema detectará a nova pasta, instalará as dependências e reiniciará o agente.
-    *   **Opção B (Manual/Imediata)**: Force a detecção agora mesmo:
+    *   **Opção A (Automática)**: O sistema roda um scan diário às **03:00 AM**. Ele detecta novas pastas, instala as dependências (Node/Python) e recarrega o agente.
+    *   **Opção B (Manual/Imediata)**: Force a detecção e instalação agora mesmo sem reiniciar o container:
         ```bash
         docker compose exec openclaw /usr/local/bin/scan_skills.sh
         ```
-    *   **Opção C (Reinício)**: Reinicie o container:
+    *   **Opção C (Reinício Total)**:
         ```bash
         docker compose restart openclaw
         ```
 
 ### Estrutura de Diretórios
+O diretório `./skills` do seu host é mapeado diretamente para dentro do container, facilitando o desenvolvimento.
 
-O diretório `./skills` do seu host é mapeado diretamente para dentro do container.
 ```text
 .
 ├── skills/                  # Suas skills locais (Git Repos)
-│   ├── skill-google-search/
-│   └── skill-pdf-reader/
+│   ├── duckduckgo-search/   # Skill Python (com requirements.txt)
+│   ├── outra-skill-node/    # Skill Node.js (com package.json)
+│   └── ...
 ├── docker-compose.yml       # Orquestração
-├── Dockerfile               # Definição da Imagem
 └── ...
 ```
 
