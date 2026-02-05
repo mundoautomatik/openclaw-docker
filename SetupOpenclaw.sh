@@ -404,13 +404,30 @@ menu() {
                 read -p "Pressione ENTER para continuar..."
                 ;;
             3)
-                if [ -d "$INSTALL_DIR" ]; then
-                    cd "$INSTALL_DIR" || exit
-                    docker compose logs -f --tail 50
+                log_info "Buscando logs do OpenClaw..."
+                
+                # Tenta logs de Swarm Service primeiro
+                if docker service ps openclaw_openclaw >/dev/null 2>&1; then
+                    log_info "Detectado modo Swarm. Exibindo logs do serviço..."
+                    docker service logs -f --tail 100 openclaw_openclaw
+                # Se não, tenta logs de Container local (Standalone ou Node específico)
+                elif [ -d "$INSTALL_DIR" ]; then
+                     cd "$INSTALL_DIR" || exit
+                     if docker compose ps | grep -q "openclaw"; then
+                        docker compose logs -f --tail 100
+                     else
+                        # Fallback genérico: busca container por nome
+                        local container_id=$(docker ps --filter "name=openclaw" --format "{{.ID}}" | head -n 1)
+                        if [ -n "$container_id" ]; then
+                             docker logs -f --tail 100 "$container_id"
+                        else
+                             log_error "Nenhum container ou serviço OpenClaw encontrado rodando."
+                        fi
+                     fi
                 else
-                    log_error "OpenClaw não parece estar instalado em $INSTALL_DIR"
-                    read -p "Pressione ENTER para continuar..."
+                    log_error "OpenClaw não parece estar instalado em $INSTALL_DIR e nenhum serviço Swarm foi detectado."
                 fi
+                read -p "Pressione ENTER para continuar..."
                 ;;
             4)
                 enter_shell
