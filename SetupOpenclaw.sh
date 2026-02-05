@@ -109,9 +109,18 @@ detect_swarm_traefik() {
 generate_swarm_config() {
     local network_name="$1"
     local domain="$2"
+    local auth_hash="$3"
     
     log_info "Gerando configuração para Swarm (Traefik na rede $network_name)..."
     
+    local middleware_config=""
+    if [ -n "$auth_hash" ]; then
+        log_info "Configurando autenticação para o usuário: $(echo $auth_hash | cut -d: -f1)"
+        middleware_config="
+        - \"traefik.http.middlewares.openclaw-auth.basicauth.users=$auth_hash\"
+        - \"traefik.http.routers.openclaw.middlewares=openclaw-auth\""
+    fi
+
     cat > docker-compose.swarm.yml <<EOF
 services:
   openclaw:
@@ -125,6 +134,7 @@ services:
         - "traefik.http.routers.openclaw.rule=Host(\`$domain\`)"
         - "traefik.http.routers.openclaw.entrypoints=web"
         - "traefik.http.services.openclaw.loadbalancer.server.port=18789"
+$middleware_config
         # Opcional: Se usar HTTPS/TLS
         # - "traefik.http.routers.openclaw.entrypoints=websecure"
         # - "traefik.http.routers.openclaw.tls=true"
@@ -193,7 +203,48 @@ setup_openclaw() {
             read -r DOMAIN
             [ -z "$DOMAIN" ] && DOMAIN="openclaw.app.localhost"
             
-            generate_swarm_config "$TRAEFIK_NET" "$DOMAIN"
+            # --- Autenticação ---
+            local AUTH_HASH=""
+            echo ""
+            echo -e "Deseja proteger o acesso com senha (Basic Auth)?"
+            echo -en "${BRANCO}[Y/n]: ${RESET}"
+            read -r ENABLE_AUTH
+            
+            if [[ "$ENABLE_AUTH" =~ ^[Yy]$ || -z "$ENABLE_AUTH" ]]; then
+                echo -en "${BRANCO}Usuário (default: admin): ${RESET}"
+                read -r AUTH_USER
+                [ -z "$AUTH_USER" ] && AUTH_USER="admin"
+                
+                echo -en "${BRANCO}Senha: ${RESET}"
+                read -rs AUTH_PASS
+                echo ""
+                
+                log_info "Gerando hash de senha..."
+                # Tenta usar htpasswd via docker (httpd:alpine) - imagem leve ~5MB
+                # Se falhar (ex: sem internet para pull), tenta python ou avisa
+                AUTH_HASH=$(docker run --rm --entrypoint htpasswd httpd:alpine -nb "$AUTH_USER" "$AUTH_PASS" 2>/dev/null)
+                
+                if [ -z "$AUTH_HASH" ]; then
+                     # Fallback para Python (se disponível no host)
+                     if command -v python3 &>/dev/null; then
+                         # Gera MD5 crypt (comum em linux)
+                         local pass_hash=$(python3 -c "import crypt; print(crypt.crypt('$AUTH_PASS', crypt.mksalt(crypt.METHOD_MD5)))" 2>/dev/null)
+                         if [ -n "$pass_hash" ]; then
+                            AUTH_HASH="$AUTH_USER:$pass_hash"
+                         fi
+                     fi
+                fi
+
+                if [ -n "$AUTH_HASH" ]; then
+                    log_success "Hash gerado com sucesso!"
+                    echo -e "Credenciais: ${VERDE}$AUTH_USER${RESET} / ${VERDE}******${RESET}"
+                else
+                    log_error "Não foi possível gerar o hash (requer internet para baixar httpd:alpine ou python3 local)."
+                    echo -e "${AMARELO}A instalação continuará sem autenticação.${RESET}"
+                fi
+            fi
+
+            generate_swarm_config "$TRAEFIK_NET" "$DOMAIN" "$AUTH_HASH"
             
             log_info "Construindo imagem local..."
             docker build -t openclaw:latest .
