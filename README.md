@@ -211,7 +211,7 @@ O sistema de **Auto-Reload** detecta e instala dependências automaticamente par
     ```
 
 2.  **Ativação**:
-    *   **Opção A (Automática)**: O sistema roda um scan diário às **03:00 AM**. Ele detecta novas pastas, instala as dependências (Node/Python) e recarrega o agente.
+    *   **Opção A (Automática)**: O sistema roda um scan diário às **03:00 AM**. Além disso, o **script de instalação executa uma varredura inicial** logo após o deploy.
     *   **Opção B (Manual/Imediata)**: Force a detecção e instalação agora mesmo sem reiniciar o container:
         ```bash
         docker compose exec openclaw /usr/local/bin/scan_skills.sh
@@ -248,11 +248,15 @@ docker build -t watink/openclaw:latest .
 
 ## 📂 Volumes e Persistência
 
-| Volume | Caminho no Container | Descrição |
-|--------|----------------------|-----------|
-| `openclaw_config` | `/home/openclaw/.openclaw` | Armazena configurações, chaves de API e sessões. |
-| `openclaw_workspace` | `/home/openclaw/workspace` | Arquivos gerados pelo agente durante o uso. |
-| `./skills` (Bind Mount) | `/home/openclaw/workspace/skills` | Sincronização direta das suas skills locais. |
+Para garantir que seus dados estejam seguros e acessíveis, o instalador configura automaticamente a persistência no host:
+
+| Volume | Caminho no Container | Caminho no Host (Produção/Setup) | Caminho Local (Dev/Manual) |
+|--------|----------------------|----------------------------------|----------------------------|
+| `openclaw_config` | `/home/openclaw/.openclaw` | `/root/openclaw/config` | `./data/config` |
+| `openclaw_workspace` | `/home/openclaw/workspace` | `/root/openclaw/workspace` | `./data/workspace` |
+| `./skills` (Bind) | `/home/openclaw/workspace/skills` | `/opt/openclaw/skills` | `./skills` |
+
+> **Nota:** O script `SetupOpenclaw.sh` configura permissões automáticas (`chown 1000:1000`) para que o usuário do container possa escrever nestes diretórios sem erros.
 
 ---
 

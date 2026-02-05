@@ -252,6 +252,21 @@ setup_security_config() {
     rm -f ./current_config.json ./new_config.json
 }
 
+install_initial_skills() {
+    log_info "Verificando e instalando skills iniciais..."
+    local container_id=$(docker ps --filter "name=openclaw" --format "{{.ID}}" | head -n 1)
+    
+    if [ -n "$container_id" ]; then
+        # Executa o scan em background para não travar se demorar muito, ou foreground?
+        # Melhor foreground para garantir que o usuário veja o output
+        log_info "Executando varredura de skills dentro do container..."
+        docker exec "$container_id" /usr/local/bin/scan_skills.sh
+        log_success "Skills processadas."
+    else
+        log_error "Container não encontrado. Pulei a instalação de skills."
+    fi
+}
+
 # --- Instalação do OpenClaw ---
 
 setup_openclaw() {
@@ -345,6 +360,7 @@ setup_openclaw() {
             if [ $? -eq 0 ]; then
                 log_success "OpenClaw implantado no Swarm!"
                 setup_security_config
+                install_initial_skills
                 echo -e "Acesse em: ${VERDE}http://$DOMAIN${RESET}"
             else
                 log_error "Falha no deploy Swarm."
@@ -366,6 +382,7 @@ setup_openclaw() {
     if [ $? -eq 0 ]; then
         log_success "OpenClaw iniciado com sucesso!"
         setup_security_config
+        install_initial_skills
         echo ""
         echo -e "${BRANCO}Comandos úteis:${RESET}"
         echo -e "  - Ver logs: ${VERDE}docker compose logs -f${RESET}"
