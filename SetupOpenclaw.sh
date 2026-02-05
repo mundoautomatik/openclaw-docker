@@ -74,6 +74,20 @@ check_deps() {
 
 # --- Infraestrutura ---
 
+prepare_persistence() {
+    log_info "Configurando diretórios de persistência em /root/openclaw..."
+    
+    # Cria diretórios no host
+    mkdir -p /root/openclaw/config
+    mkdir -p /root/openclaw/workspace
+    
+    # Ajusta permissões para o usuário do container (UID 1000)
+    # Isso evita erros de EACCES/Permission Denied
+    chown -R 1000:1000 /root/openclaw
+    
+    log_success "Diretórios de persistência prontos."
+}
+
 detect_swarm_traefik() {
     log_info "Verificando ambiente Swarm e Traefik..."
     
@@ -140,19 +154,14 @@ $middleware_config
         # - "traefik.http.routers.openclaw.entrypoints=websecure"
         # - "traefik.http.routers.openclaw.tls=true"
     volumes:
-      - openclaw_config:/home/openclaw/.openclaw
-      - openclaw_workspace:/home/openclaw/workspace
-      - openclaw_home:/home/openclaw
+      - /root/openclaw/config:/home/openclaw/.openclaw
+      - /root/openclaw/workspace:/home/openclaw/workspace
+      # - /root/openclaw/home:/home/openclaw
       - ./skills:/home/openclaw/workspace/skills
 
 networks:
   $network_name:
     external: true
-
-volumes:
-  openclaw_config:
-  openclaw_workspace:
-  openclaw_home:
 EOF
 }
 
@@ -266,6 +275,9 @@ setup_openclaw() {
 
     # 3. Build & Deploy
     
+    # Preparar persistência (diretórios no host)
+    prepare_persistence
+
     # Tenta detectar Traefik/Swarm
     TRAEFIK_NET=$(detect_swarm_traefik)
     
@@ -343,6 +355,11 @@ setup_openclaw() {
 
     # Modo Standalone (Padrão)
     log_info "Baixando imagem oficial e iniciando containers (Standalone)..."
+    
+    # Define variáveis para o docker-compose.yml usar paths do host
+    export OPENCLAW_CONFIG_PATH="/root/openclaw/config"
+    export OPENCLAW_WORKSPACE_PATH="/root/openclaw/workspace"
+    
     docker compose pull
     docker compose up -d
     
