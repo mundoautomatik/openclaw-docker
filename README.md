@@ -79,13 +79,6 @@ Se você fez alterações no Dockerfile:
 docker build -t openclaw:latest .
 ```
 
-### Publicar no Docker Hub
-Para enviar uma nova versão para o registro público (requer login):
-```bash
-./push_to_hub.sh seu-usuario-dockerhub
-# Exemplo: ./push_to_hub.sh watink
-```
-
 ---
 
 ## 📂 Volumes e Persistência
