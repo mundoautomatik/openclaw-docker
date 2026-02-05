@@ -291,7 +291,15 @@ enter_shell() {
     
     if [ -n "$container_id" ]; then
         log_info "Container encontrado: $container_id"
-        echo -e "${VERDE}Acessando container... Digite 'exit' para sair.${RESET}"
+        
+        echo ""
+        echo -e "${BRANCO}Comandos internos disponíveis no OpenClaw:${RESET}"
+        echo -e "  - ${VERDE}openclaw onboard --install-daemon${RESET} : Instala o daemon do sistema"
+        echo -e "  - ${VERDE}/usr/local/bin/scan_skills.sh${RESET}     : Escaneia e instala novas skills"
+        echo -e "  - ${VERDE}openclaw --help${RESET}                   : Ajuda geral do CLI"
+        echo -e "  - ${VERDE}exit${RESET}                              : Sair do terminal"
+        echo ""
+        echo -e "${VERDE}Acessando container...${RESET}"
         
         # Tenta bash, se falhar tenta sh
         docker exec -it "$container_id" /bin/bash || docker exec -it "$container_id" /bin/sh
