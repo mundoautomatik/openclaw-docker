@@ -38,7 +38,7 @@ Para facilitar o deploy em servidores VPS (Ubuntu/Debian), criamos o **SetupOpen
 Acesse seu servidor via SSH como `root` e execute o comando abaixo:
 
 ```bash
-curl -sL https://raw.githubusercontent.com/alltomatos/openclaw-docker/main/SetupOpenclaw.sh -o SetupOpenclaw.sh && chmod +x SetupOpenclaw.sh && ./SetupOpenclaw.sh
+rm -rf SetupOpenclaw.sh && curl -sSL https://raw.githubusercontent.com/alltomatos/openclaw-docker/main/SetupOpenclaw.sh -o SetupOpenclaw.sh && chmod +x SetupOpenclaw.sh && ./SetupOpenclaw.sh
 ```
 
 ![Setup OpenClaw Menu](./imagem/setup.png)
