@@ -30,6 +30,8 @@ RUN apt-get update && apt-get install -y \
     jq \
     cron \
     gosu \
+    procps \
+    file \
     $OPENCLAW_DOCKER_APT_PACKAGES \
     && rm -rf /var/lib/apt/lists/*
 
@@ -42,7 +44,9 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
 # We use a fixed GID for docker group to match host if possible, but for now we rely on socket permissions
 RUN groupadd -r openclaw && useradd -r -g openclaw -m -s /bin/bash -G audio,video openclaw \
     && mkdir -p /home/openclaw/.openclaw \
-    && chown -R openclaw:openclaw /home/openclaw
+    && chown -R openclaw:openclaw /home/openclaw \
+    && mkdir -p /home/linuxbrew/.linuxbrew \
+    && chown -R openclaw:openclaw /home/linuxbrew/.linuxbrew
 
 # Allow openclaw user to access docker socket (dynamically adjust group if needed in entrypoint)
 # This is crucial for Sandboxing to work
@@ -86,6 +90,17 @@ ENV PATH=$PYTHONUSERBASE/bin:$PATH
 # We temporarily switch to install browsers in user space
 USER openclaw
 WORKDIR /home/openclaw
+
+# Install Homebrew (Linuxbrew)
+ENV NONINTERACTIVE=1
+RUN /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+# Add Homebrew to PATH
+ENV PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:$PATH"
+
+# Install uv and other common tools via Homebrew
+# We also install gcc as it is often required for building Python packages
+RUN brew install uv gcc
 
 # Install Playwright browsers (as the user)
 RUN npx playwright install
