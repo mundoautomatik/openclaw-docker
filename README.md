@@ -53,6 +53,8 @@ O menu interativo facilita o gerenciamento do ambiente:
 7.  **Gerar QR Code WhatsApp**: Atalho rápido para conectar seu WhatsApp.
 8.  **Reiniciar Gateway**: Reinicia o serviço de gateway (útil após conectar canais).
 9.  **Limpar VPS**: Remove completamente o OpenClaw (cuidado!).
+10. **Instalação Completa**: Instala Docker, Swarm, Traefik, Portainer (com admin) e OpenClaw.
+11. **Aprovar Dispositivo**: Facilita a aprovação de novos dispositivos (Device Pairing) conectados ao Gateway.
 
 Siga as instruções do menu interativo. O script detectará automaticamente se é necessário instalar a infraestrutura e guiará você passo-a-passo. Você poderá escolher entre o modo **Cluster (Swarm + Traefik)** ou **Standalone (Docker Puro)**.
 

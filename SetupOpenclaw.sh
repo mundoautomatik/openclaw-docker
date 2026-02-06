@@ -369,6 +369,244 @@ build_image() {
     fi
 }
 
+# --- Helpers ---
+
+wait_stack() {
+    local stack_name="$1"
+    local max_retries=30
+    local count=0
+    
+    log_info "Aguardando serviços da stack '$stack_name'..."
+    
+    while [ $count -lt $max_retries ]; do
+        # Verifica se todos os serviços da stack têm réplicas rodando
+        local services_total=$(docker stack services "$stack_name" --format "{{.Replicas}}" | wc -l)
+        local services_running=$(docker stack services "$stack_name" --format "{{.Replicas}}" | grep -v "0/0" | grep -v "0/" | wc -l)
+        
+        if [ "$services_total" -gt 0 ] && [ "$services_total" -eq "$services_running" ]; then
+            log_success "Stack '$stack_name' está operacional."
+            return 0
+        fi
+        
+        echo -n "."
+        sleep 5
+        count=$((count + 1))
+    done
+    
+    log_error "Timeout aguardando stack '$stack_name'."
+    return 1
+}
+
+# --- Instalação Completa (Swarm + Portainer + Traefik) ---
+
+install_full_stack_swarm() {
+    log_info "Iniciando Setup Completo (Docker Swarm + Portainer + Traefik + OpenClaw)..."
+    
+    # 1. Instalar Docker
+    install_docker
+    
+    # 2. Iniciar Swarm se necessário
+    if [ "$(docker info --format '{{.Swarm.LocalNodeState}}')" != "active" ]; then
+        log_info "Iniciando Docker Swarm..."
+        docker swarm init >/dev/null 2>&1 || log_error "Falha ao iniciar Swarm (talvez precise de --advertise-addr?)"
+    fi
+    
+    # 3. Coletar Informações
+    echo ""
+    echo -e "${AZUL}=== Configuração de Infraestrutura ===${RESET}"
+    
+    echo -en "${BRANCO}Nome da Rede Interna (ex: public_net): ${RESET}"
+    read -r NETWORK_NAME
+    [ -z "$NETWORK_NAME" ] && NETWORK_NAME="public_net"
+    
+    echo -en "${BRANCO}Email para SSL/Let's Encrypt (ex: admin@exemplo.com): ${RESET}"
+    read -r EMAIL_SSL
+    [ -z "$EMAIL_SSL" ] && EMAIL_SSL="admin@openclaw.local"
+    
+    echo -en "${BRANCO}Domínio do Portainer (ex: portainer.seu-dominio.com): ${RESET}"
+    read -r PORTAINER_DOMAIN
+    
+    echo -en "${BRANCO}Usuário Admin do Portainer (ex: admin): ${RESET}"
+    read -r PORTAINER_USER
+    [ -z "$PORTAINER_USER" ] && PORTAINER_USER="admin"
+    
+    echo -en "${BRANCO}Senha do Portainer (min 12 chars): ${RESET}"
+    read -r PORTAINER_PASS
+    
+    # 4. Criar Rede e Volumes
+    log_info "Criando rede $NETWORK_NAME..."
+    docker network create --driver overlay --attachable "$NETWORK_NAME" >/dev/null 2>&1 || true
+    
+    docker volume create volume_swarm_certificates >/dev/null 2>&1
+    docker volume create portainer_data >/dev/null 2>&1
+    
+    # 5. Deploy Traefik
+    log_info "Preparando Traefik..."
+    cat > traefik.yaml <<EOF
+version: "3.7"
+services:
+  traefik:
+    image: traefik:v3.4.0
+    command:
+      - "--api.dashboard=true"
+      - "--providers.swarm=true"
+      - "--providers.docker.endpoint=unix:///var/run/docker.sock"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=$NETWORK_NAME"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.web.http.redirections.entryPoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entryPoint.scheme=https"
+      - "--entrypoints.web.http.redirections.entrypoint.permanent=true"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.letsencryptresolver.acme.httpchallenge=true"
+      - "--certificatesresolvers.letsencryptresolver.acme.httpchallenge.entrypoint=web"
+      - "--certificatesresolvers.letsencryptresolver.acme.storage=/etc/traefik/letsencrypt/acme.json"
+      - "--certificatesresolvers.letsencryptresolver.acme.email=$EMAIL_SSL"
+      - "--log.level=INFO"
+      - "--accesslog=true"
+    volumes:
+      - volume_swarm_certificates:/etc/traefik/letsencrypt
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - $NETWORK_NAME
+    ports:
+      - target: 80
+        published: 80
+        mode: host
+      - target: 443
+        published: 443
+        mode: host
+    deploy:
+      placement:
+        constraints: [node.role == manager]
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.traefik-dashboard.rule=Host(\`traefik.localhost\`)"
+        - "traefik.http.routers.traefik-dashboard.service=api@internal"
+        - "traefik.http.routers.traefik-dashboard.entrypoints=websecure"
+        - "traefik.http.routers.traefik-dashboard.tls.certresolver=letsencryptresolver"
+
+volumes:
+  volume_swarm_certificates:
+    external: true
+
+networks:
+  $NETWORK_NAME:
+    external: true
+EOF
+
+    log_info "Implantando Traefik..."
+    docker stack deploy -c traefik.yaml traefik
+    wait_stack "traefik"
+    
+    # 6. Deploy Portainer
+    log_info "Preparando Portainer..."
+    cat > portainer.yaml <<EOF
+version: "3.7"
+services:
+  agent:
+    image: portainer/agent:latest
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/docker/volumes:/var/lib/docker/volumes
+    networks:
+      - $NETWORK_NAME
+    deploy:
+      mode: global
+      placement:
+        constraints: [node.platform.os == linux]
+
+  portainer:
+    image: portainer/portainer-ce:latest
+    command: -H tcp://tasks.agent:9001 --tlsskipverify
+    volumes:
+      - portainer_data:/data
+    networks:
+      - $NETWORK_NAME
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.portainer.rule=Host(\`$PORTAINER_DOMAIN\`)"
+        - "traefik.http.services.portainer.loadbalancer.server.port=9000"
+        - "traefik.http.routers.portainer.tls.certresolver=letsencryptresolver"
+        - "traefik.http.routers.portainer.service=portainer"
+        - "traefik.docker.network=$NETWORK_NAME"
+        - "traefik.http.routers.portainer.entrypoints=websecure"
+
+volumes:
+  portainer_data:
+    external: true
+
+networks:
+  $NETWORK_NAME:
+    external: true
+EOF
+
+    log_info "Implantando Portainer..."
+    docker stack deploy -c portainer.yaml portainer
+    
+    log_info "Aguardando Portainer iniciar para criar admin..."
+    wait_stack "portainer"
+    sleep 10 # Margem de segurança extra
+    
+    # 7. Criar Admin Portainer
+    log_info "Configurando usuário admin do Portainer..."
+    local MAX_RETRIES=5
+    local CONTA_CRIADA=false
+    
+    for i in $(seq 1 $MAX_RETRIES); do
+        RESPONSE=$(curl -k -s -X POST "https://$PORTAINER_DOMAIN/api/users/admin/init" \
+            -H "Content-Type: application/json" \
+            -d "{\"Username\": \"$PORTAINER_USER\", \"Password\": \"$PORTAINER_PASS\"}")
+            
+        if echo "$RESPONSE" | grep -q "\"Username\":\"$PORTAINER_USER\""; then
+            log_success "Admin Portainer criado com sucesso!"
+            CONTA_CRIADA=true
+            break
+        else
+            log_info "Tentativa $i/$MAX_RETRIES de criar admin falhou. Retentando..."
+            sleep 5
+        fi
+    done
+    
+    local TOKEN=""
+    if [ "$CONTA_CRIADA" = true ]; then
+        # Gerar Token JWT
+        TOKEN=$(curl -k -s -X POST "https://$PORTAINER_DOMAIN/api/auth" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\":\"$PORTAINER_USER\",\"password\":\"$PORTAINER_PASS\"}" | jq -r .jwt)
+            
+        # Salvar dados Portainer
+        mkdir -p /root/dados_vps
+        cat > /root/dados_vps/dados_portainer.txt <<EOF
+[ PORTAINER ]
+URL: https://$PORTAINER_DOMAIN
+User: $PORTAINER_USER
+Pass: $PORTAINER_PASS
+Token: $TOKEN
+EOF
+        chmod 600 /root/dados_vps/dados_portainer.txt
+    else
+        log_error "Não foi possível criar o admin do Portainer automaticamente."
+        echo "Crie manualmente acessando: https://$PORTAINER_DOMAIN"
+    fi
+    
+    # 8. Deploy OpenClaw
+    echo ""
+    echo -e "${AZUL}=== Instalação do OpenClaw ===${RESET}"
+    
+    # Usar a função setup_openclaw mas forçando o modo swarm
+    # Como setup_openclaw é interativo, vamos chamar a lógica de deploy direto aqui
+    # ou podemos chamar setup_openclaw e o usuário escolhe Swarm (que já vai ser detectado!)
+    
+    log_info "Continuando para instalação do OpenClaw..."
+    setup_openclaw
+}
+
 # --- Instalação do OpenClaw ---
 
 setup_openclaw() {
@@ -733,6 +971,47 @@ restart_gateway() {
     fi
 }
 
+approve_device() {
+    log_info "Gerenciamento de Dispositivos (Device Pairing)..."
+    
+    # Encontrar container (Lógica unificada de busca)
+    local container_id=$(docker ps --filter "name=openclaw" --format "{{.ID}}" | head -n 1)
+    
+    # Se não achou por nome simples, tenta padrão Swarm no nó local
+    if [ -z "$container_id" ]; then
+        container_id=$(docker ps --filter "name=openclaw_openclaw" --format "{{.ID}}" | head -n 1)
+    fi
+
+    if [ -n "$container_id" ]; then
+        log_info "Container encontrado: $container_id"
+        log_info "Listando requisições de pareamento pendentes..."
+        echo ""
+        echo -e "${AMARELO}--- Requisições Pendentes ---${RESET}"
+        docker exec "$container_id" openclaw devices list
+        echo -e "${AMARELO}-----------------------------${RESET}"
+        echo ""
+        
+        echo -en "${BRANCO}Digite o ID da requisição para aprovar (ou ENTER para sair): ${RESET}"
+        read -r REQ_ID
+        
+        if [ -n "$REQ_ID" ]; then
+            log_info "Tentando aprovar dispositivo $REQ_ID..."
+            docker exec "$container_id" openclaw devices approve "$REQ_ID"
+            
+            if [ $? -eq 0 ]; then
+                log_success "Dispositivo aprovado com sucesso!"
+            else
+                log_error "Falha ao aprovar dispositivo. Verifique o ID e tente novamente."
+            fi
+        else
+            log_info "Operação cancelada."
+        fi
+    else
+        log_error "Container OpenClaw não encontrado neste nó."
+        echo -e "${AMARELO}Se estiver em cluster Swarm, execute este comando no nó onde o container 'openclaw' está rodando.${RESET}"
+    fi
+}
+
 # --- Gerenciamento de Skills ---
 
 manage_skills() {
@@ -824,6 +1103,8 @@ menu() {
         echo -e "${VERDE}6${BRANCO} - Rodar Setup Wizard (Onboard Oficial)${RESET}"
         echo -e "${VERDE}7${BRANCO} - Gerar QR Code WhatsApp${RESET}"
         echo -e "${VERDE}8${BRANCO} - Reiniciar Gateway${RESET}"
+        echo -e "${VERDE}10${BRANCO} - Instalação Completa (Swarm + Portainer + Traefik)${RESET}"
+        echo -e "${VERDE}11${BRANCO} - Aprovar Dispositivo (Device Pairing)${RESET}"
         echo -e "${VERMELHO}9${BRANCO} - Limpar VPS (Remover OpenClaw)${RESET}"
         echo -e "${VERDE}0${BRANCO} - Sair${RESET}"
         echo ""
@@ -892,6 +1173,18 @@ menu() {
             8)
                 check_root
                 restart_gateway
+                read -p "Pressione ENTER para continuar..."
+                ;;
+            10)
+                check_root
+                check_deps
+                ensure_docker_permission
+                install_full_stack_swarm
+                read -p "Pressione ENTER para continuar..."
+                ;;
+            11)
+                check_root
+                approve_device
                 read -p "Pressione ENTER para continuar..."
                 ;;
             9)
