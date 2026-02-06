@@ -271,11 +271,21 @@ setup_security_config() {
     
     # Salvar token em arquivo seguro
     mkdir -p /root/dados_vps
+    
+    # Detectar IP Externo para facilitar o acesso
+    local PUBLIC_IP="LOCALHOST"
+    if command -v curl &> /dev/null; then
+        PUBLIC_IP=$(curl -s --connect-timeout 3 ifconfig.me || echo "LOCALHOST")
+    fi
+    
     echo "================================================================" > /root/dados_vps/openclaw.txt
     echo " DATA DE INSTALAÇÃO: $(date)" >> /root/dados_vps/openclaw.txt
     echo "================================================================" >> /root/dados_vps/openclaw.txt
     echo " TOKEN DE ACESSO (GATEWAY):" >> /root/dados_vps/openclaw.txt
     echo " $NEW_TOKEN" >> /root/dados_vps/openclaw.txt
+    echo "----------------------------------------------------------------" >> /root/dados_vps/openclaw.txt
+    echo " LINK DIRETO DO DASHBOARD:" >> /root/dados_vps/openclaw.txt
+    echo " http://$PUBLIC_IP:18789/?token=$NEW_TOKEN" >> /root/dados_vps/openclaw.txt
     echo "================================================================" >> /root/dados_vps/openclaw.txt
     chmod 600 /root/dados_vps/openclaw.txt
 
