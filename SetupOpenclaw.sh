@@ -129,6 +129,56 @@ prepare_persistence() {
         fi
     fi
     
+    # --- PROACTIVE FIX: Ensure Token exists to prevent Crash Loop ---
+    # The container crashes immediately if auth type is token but no token is set.
+    # We must inject it BEFORE starting the container.
+    
+    if [ -f "$config_file" ]; then
+        # Check if token exists
+        local has_token=$(jq -r '.gateway.auth.token // empty' "$config_file" 2>/dev/null)
+        
+        if [ -z "$has_token" ]; then
+            log_info "Token de autenticação ausente. Gerando um novo para evitar crash loop..."
+            
+            # Generate Token
+            local new_token=""
+            if command -v openssl &> /dev/null; then
+                new_token=$(openssl rand -hex 32)
+            else
+                new_token=$(date +%s%N | sha256sum | head -c 64)
+            fi
+            
+            # Inject Token and Trusted Proxies using jq
+            local tmp_conf=$(mktemp)
+            jq --arg token "$new_token" '
+                .gateway.auth.token = $token |
+                .gateway.trustedProxies = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.1"]
+            ' "$config_file" > "$tmp_conf" && mv "$tmp_conf" "$config_file"
+            
+            # Save to info file
+            mkdir -p /root/dados_vps
+            echo "================================================================" > /root/dados_vps/openclaw.txt
+            echo " DATA DE INSTALAÇÃO: $(date)" >> /root/dados_vps/openclaw.txt
+            echo "================================================================" >> /root/dados_vps/openclaw.txt
+            echo " TOKEN DE ACESSO (GATEWAY):" >> /root/dados_vps/openclaw.txt
+            echo " $new_token" >> /root/dados_vps/openclaw.txt
+            echo "----------------------------------------------------------------" >> /root/dados_vps/openclaw.txt
+            
+            # Get IP
+            local public_ip="LOCALHOST"
+            if command -v curl &> /dev/null; then
+                public_ip=$(curl -s --connect-timeout 3 ifconfig.me || echo "LOCALHOST")
+            fi
+            
+            echo " LINK DIRETO DO DASHBOARD:" >> /root/dados_vps/openclaw.txt
+            echo " http://$public_ip:18789/?token=$new_token" >> /root/dados_vps/openclaw.txt
+            echo "================================================================" >> /root/dados_vps/openclaw.txt
+            chmod 600 /root/dados_vps/openclaw.txt
+            
+            log_success "Token gerado e injetado com sucesso: $new_token"
+        fi
+    fi
+
     # Ajusta permissões para o usuário do container (UID 1000)
     # Isso evita erros de EACCES/Permission Denied
     chown -R 1000:1000 /root/openclaw
