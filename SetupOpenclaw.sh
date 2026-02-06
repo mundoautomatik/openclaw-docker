@@ -167,6 +167,7 @@ generate_swarm_config() {
     local network_name="$1"
     local domain="$2"
     local auth_hash="$3"
+    local gateway_token="$4"
     
     log_info "Gerando configuração para Swarm (Traefik na rede $network_name)..."
     
@@ -199,8 +200,8 @@ services:
         # Canvas Host (Porta 18793) - Requer subdomínio ou path separado se exposto via Traefik
     environment:
       - OPENCLAW_DISABLE_BONJOUR=1
-      # Token de Gateway para automação (opcional, pode ser injetado via secret futuramente)
-      - OPENCLAW_GATEWAY_TOKEN=\${OPENCLAW_GATEWAY_TOKEN:-}
+      # Token de Gateway para automação
+      - OPENCLAW_GATEWAY_TOKEN=\${OPENCLAW_GATEWAY_TOKEN:-$gateway_token}
     volumes:
       # Mapeamento direto para persistência no host
       - /root/openclaw/.openclaw:/home/openclaw/.openclaw
@@ -260,6 +261,7 @@ EOF
 }
 
 setup_security_config() {
+    local gen_token="$1"
     log_info "Verificando configuração de segurança..."
     
     # Aguarda o container subir (tentativa simples)
@@ -276,13 +278,21 @@ setup_security_config() {
     # Usamos cat para ler sem copiar o arquivo para o host
     local config_content=$(docker exec "$container_id" cat /home/openclaw/.openclaw/openclaw.json 2>/dev/null)
     
+    # Se não conseguir ler, assume vazio
     if [ -z "$config_content" ]; then
          log_warn "Arquivo de configuração não encontrado ou vazio dentro do container."
-         return
     fi
 
     # Verificar se tem token configurado pelo Wizard
-    local auth_token=$(echo "$config_content" | jq -r '.gateway.auth.token // empty')
+    local auth_token=""
+    if [ -n "$config_content" ]; then
+        auth_token=$(echo "$config_content" | jq -r '.gateway.auth.token // empty')
+    fi
+    
+    # Se não achou no JSON, mas temos um gerado via Env Var, usa o gerado
+    if [ -z "$auth_token" ] && [ -n "$gen_token" ]; then
+        auth_token="$gen_token"
+    fi
     
     if [ -n "$auth_token" ]; then
         log_info "Token de segurança detectado."
@@ -883,6 +893,15 @@ setup_openclaw() {
             [ -z "$DOMAIN" ] && DOMAIN="openclaw.app.localhost"
             
             # --- Autenticação ---
+            # Gerar Token Automático para injeção na Stack
+            log_info "Gerando token de acesso seguro..."
+            local GEN_TOKEN=""
+            if command -v openssl &> /dev/null; then
+                GEN_TOKEN=$(openssl rand -hex 16)
+            else
+                GEN_TOKEN=$(date +%s%N | sha256sum | base64 | head -c 32)
+            fi
+
             local AUTH_HASH=""
             echo ""
             echo -e "Deseja proteger o acesso com senha (Basic Auth)?"
@@ -931,8 +950,22 @@ setup_openclaw() {
                     echo -e "${AMARELO}A instalação continuará sem autenticação.${RESET}"
                 fi
             fi
+            
+            # Salvar Token para referência (Swarm)
+            mkdir -p /root/dados_vps
+            if [ ! -f /root/dados_vps/openclaw.txt ]; then
+                 echo "================================================================" > /root/dados_vps/openclaw.txt
+                 echo " DATA DE INSTALAÇÃO: $(date)" >> /root/dados_vps/openclaw.txt
+                 echo "================================================================" >> /root/dados_vps/openclaw.txt
+            fi
+            if ! grep -q "TOKEN DE ACESSO" /root/dados_vps/openclaw.txt; then
+                echo " TOKEN DE ACESSO (GATEWAY):" >> /root/dados_vps/openclaw.txt
+                echo " $GEN_TOKEN" >> /root/dados_vps/openclaw.txt
+                echo "----------------------------------------------------------------" >> /root/dados_vps/openclaw.txt
+            fi
+            chmod 600 /root/dados_vps/openclaw.txt
 
-            generate_swarm_config "$TRAEFIK_NET" "$DOMAIN" "$AUTH_HASH"
+            generate_swarm_config "$TRAEFIK_NET" "$DOMAIN" "$AUTH_HASH" "$GEN_TOKEN"
             
             log_info "Baixando imagem oficial..."
             if ! docker pull watink/openclaw:latest; then
@@ -947,7 +980,7 @@ setup_openclaw() {
             
             if [ $? -eq 0 ]; then
                 log_success "OpenClaw implantado no Swarm!"
-                setup_security_config
+                setup_security_config "$GEN_TOKEN"
                 sync_official_skills
                 install_initial_skills
                 
@@ -975,7 +1008,33 @@ setup_openclaw() {
     # Modo Standalone (Padrão)
     log_info "Baixando imagem oficial e iniciando containers (Standalone)..."
     
+    # Gerar Token se não existir (caso não tenha passado pelo fluxo Swarm)
+    if [ -z "$GEN_TOKEN" ]; then
+        log_info "Gerando token de acesso seguro..."
+        if command -v openssl &> /dev/null; then
+            GEN_TOKEN=$(openssl rand -hex 16)
+        else
+            GEN_TOKEN=$(date +%s%N | sha256sum | base64 | head -c 32)
+        fi
+    fi
+
+    # Salvar token para referência
+    mkdir -p /root/dados_vps
+    if [ ! -f /root/dados_vps/openclaw.txt ]; then
+        echo "================================================================" > /root/dados_vps/openclaw.txt
+        echo " DATA DE INSTALAÇÃO: $(date)" >> /root/dados_vps/openclaw.txt
+        echo "================================================================" >> /root/dados_vps/openclaw.txt
+    fi
+    # Evita duplicar se já existir
+    if ! grep -q "TOKEN DE ACESSO" /root/dados_vps/openclaw.txt; then
+        echo " TOKEN DE ACESSO (GATEWAY):" >> /root/dados_vps/openclaw.txt
+        echo " $GEN_TOKEN" >> /root/dados_vps/openclaw.txt
+        echo "----------------------------------------------------------------" >> /root/dados_vps/openclaw.txt
+    fi
+    chmod 600 /root/dados_vps/openclaw.txt
+
     # Define variáveis para o docker-compose.yml usar paths do host
+    export OPENCLAW_GATEWAY_TOKEN="$GEN_TOKEN"
     export OPENCLAW_CONFIG_PATH="/root/openclaw/.openclaw"
     
     docker compose pull
@@ -983,7 +1042,7 @@ setup_openclaw() {
     
     if [ $? -eq 0 ]; then
         log_success "OpenClaw iniciado com sucesso!"
-        setup_security_config
+        setup_security_config "$GEN_TOKEN"
         sync_official_skills
         install_initial_skills
         echo ""
@@ -1390,6 +1449,33 @@ manage_skills() {
     done
 }
 
+# --- Diagnóstico e Status ---
+
+run_doctor() {
+    log_info "Executando 'openclaw doctor'..."
+    local container_id=$(docker ps --filter "name=openclaw" --format "{{.ID}}" | head -n 1)
+    if [ -n "$container_id" ]; then
+         echo -e "${VERDE}>>> Executando diagnóstico...${RESET}"
+         docker exec -it "$container_id" openclaw doctor
+    else
+         log_error "Container não encontrado."
+    fi
+}
+
+run_status() {
+    log_info "Verificando status do gateway..."
+    local container_id=$(docker ps --filter "name=openclaw" --format "{{.ID}}" | head -n 1)
+    if [ -n "$container_id" ]; then
+         echo -e "${AZUL}>>> Status:${RESET}"
+         docker exec -it "$container_id" openclaw status
+         echo ""
+         echo -e "${AZUL}>>> Health:${RESET}"
+         docker exec -it "$container_id" openclaw health
+    else
+         log_error "Container não encontrado."
+    fi
+}
+
 # --- Menu Principal ---
 
 menu() {
@@ -1407,15 +1493,17 @@ menu() {
         echo -e "${VERDE}5${BRANCO} - Gerenciar Skills (Plugins)${RESET}"
         echo -e "${VERDE}6${BRANCO} - Gerenciar Dispositivos (Aprovar Pairing)${RESET}"
         echo -e "${VERDE}7${BRANCO} - Gerar QR Code WhatsApp${RESET}"
+        echo -e "${VERDE}8${BRANCO} - Verificar Saúde do Sistema (Doctor)${RESET}"
+        echo -e "${VERDE}9${BRANCO} - Verificar Status do Gateway${RESET}"
         echo ""
         echo -e "${AZUL}--- Utilitários ---${RESET}"
-        echo -e "${VERDE}8${BRANCO} - Ver Logs do OpenClaw${RESET}"
-        echo -e "${VERDE}9${BRANCO} - Acessar Terminal do Container${RESET}"
-        echo -e "${VERDE}10${BRANCO} - Reiniciar Gateway${RESET}"
+        echo -e "${VERDE}10${BRANCO} - Ver Logs do OpenClaw${RESET}"
+        echo -e "${VERDE}11${BRANCO} - Acessar Terminal do Container${RESET}"
+        echo -e "${VERDE}12${BRANCO} - Reiniciar Gateway${RESET}"
         echo ""
         echo -e "${AZUL}--- Sistema ---${RESET}"
-        echo -e "${VERMELHO}11${BRANCO} - Limpar VPS (Desinstalar OpenClaw)${RESET}"
-        echo -e "${VERMELHO}12${BRANCO} - Desinstalar Docker (Remove TUDO)${RESET}"
+        echo -e "${VERMELHO}13${BRANCO} - Limpar VPS (Desinstalar OpenClaw)${RESET}"
+        echo -e "${VERMELHO}14${BRANCO} - Desinstalar Docker (Remove TUDO)${RESET}"
         echo -e "${VERDE}0${BRANCO} - Sair${RESET}"
         echo ""
         echo -en "${AMARELO}Opção: ${RESET}"
@@ -1464,6 +1552,14 @@ menu() {
                 read -p "Pressione ENTER para continuar..."
                 ;;
             8)
+                run_doctor
+                read -p "Pressione ENTER para continuar..."
+                ;;
+            9)
+                run_status
+                read -p "Pressione ENTER para continuar..."
+                ;;
+            10)
                 log_info "Buscando logs do OpenClaw..."
                 
                 # Tenta logs de Swarm Service primeiro
@@ -1489,21 +1585,21 @@ menu() {
                 fi
                 read -p "Pressione ENTER para continuar..."
                 ;;
-            9)
+            11)
                 enter_shell
                 read -p "Pressione ENTER para continuar..."
                 ;;
-            10)
+            12)
                 check_root
                 restart_gateway
                 read -p "Pressione ENTER para continuar..."
                 ;;
-            11)
+            13)
                 check_root
                 cleanup_vps
                 read -p "Pressione ENTER para continuar..."
                 ;;
-            12)
+            14)
                 check_root
                 uninstall_docker
                 read -p "Pressione ENTER para continuar..."
