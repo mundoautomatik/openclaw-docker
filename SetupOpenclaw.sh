@@ -1369,6 +1369,38 @@ run_wizard() {
 
 # --- Utilitários de Canal e Gateway ---
 
+force_bind_lan() {
+    log_info "Forçando bind='lan' no openclaw.json (Correção para Acesso Externo)..."
+    
+    if [ ! -f "/root/openclaw/.openclaw/openclaw.json" ]; then
+        log_error "Arquivo de configuração não encontrado em /root/openclaw/.openclaw/openclaw.json"
+        return
+    fi
+    
+    local tmp_json=$(mktemp)
+    # Verifica se jq está disponível
+    if command -v jq &> /dev/null; then
+        jq '.gateway.bind = "lan"' "/root/openclaw/.openclaw/openclaw.json" > "$tmp_json"
+        if [ -s "$tmp_json" ]; then
+            mv "$tmp_json" "/root/openclaw/.openclaw/openclaw.json"
+            chown 1000:1000 "/root/openclaw/.openclaw/openclaw.json"
+            log_success "Configuração de bind atualizada para LAN."
+            
+            # Pergunta se deseja reiniciar
+            echo -en "${BRANCO}Deseja reiniciar o Gateway agora para aplicar? [Y/n]: ${RESET}"
+            read -r RESTART_NOW
+            if [[ "$RESTART_NOW" =~ ^[Yy]$ || -z "$RESTART_NOW" ]]; then
+                restart_gateway
+            fi
+        else
+            log_warn "Falha ao atualizar openclaw.json (saída vazia)."
+        fi
+    else
+        log_error "jq não encontrado. Instale jq para usar esta função."
+    fi
+    rm -f "$tmp_json"
+}
+
 generate_whatsapp_qrcode() {
     log_info "Iniciando geração de QR Code do WhatsApp..."
     
@@ -1607,6 +1639,7 @@ menu() {
         echo -e "${VERDE}5${BRANCO} - Gerenciar Skills (Plugins)${RESET}"
         echo -e "${VERDE}6${BRANCO} - Gerenciar Dispositivos (Aprovar Pairing)${RESET}"
         echo -e "${VERDE}7${BRANCO} - Gerar QR Code WhatsApp${RESET}"
+        echo -e "${VERDE}17${BRANCO} - Configurar Bind para LAN (Corrigir Acesso)${RESET}"
         echo ""
         echo -e "${AZUL}--- Diagnóstico & Monitoramento ---${RESET}"
         echo -e "${VERDE}8${BRANCO} - Verificar Saúde do Sistema (Doctor)${RESET}"
@@ -1667,6 +1700,12 @@ menu() {
             7)
                 check_root
                 generate_whatsapp_qrcode
+                read -p "Pressione ENTER para continuar..."
+                ;;
+            17)
+                check_root
+                check_deps
+                force_bind_lan
                 read -p "Pressione ENTER para continuar..."
                 ;;
             8)
