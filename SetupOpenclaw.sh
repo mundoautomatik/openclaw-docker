@@ -1580,24 +1580,26 @@ menu() {
         echo -e "${VERDE}2${BRANCO} - Instalar OpenClaw (Standalone ou Cluster Existente)${RESET}"
         echo -e "${VERDE}3${BRANCO} - Apenas Instalar Docker${RESET}"
         echo ""
-        echo -e "${AZUL}--- Configuração & Gerenciamento ---${RESET}"
+        echo -e "${AZUL}--- Pós-Instalação & Configuração ---${RESET}"
         echo -e "${VERDE}4${BRANCO} - Setup Wizard (Onboard Oficial)${RESET}"
         echo -e "${VERDE}5${BRANCO} - Gerenciar Skills (Plugins)${RESET}"
         echo -e "${VERDE}6${BRANCO} - Gerenciar Dispositivos (Aprovar Pairing)${RESET}"
         echo -e "${VERDE}7${BRANCO} - Gerar QR Code WhatsApp${RESET}"
+        echo ""
+        echo -e "${AZUL}--- Diagnóstico & Monitoramento ---${RESET}"
         echo -e "${VERDE}8${BRANCO} - Verificar Saúde do Sistema (Doctor)${RESET}"
         echo -e "${VERDE}9${BRANCO} - Verificar Status do Gateway${RESET}"
-        echo -e "${VERDE}16${BRANCO} - Abrir Dashboard CLI${RESET}"
+        echo -e "${VERDE}10${BRANCO} - Abrir Dashboard CLI${RESET}"
+        echo -e "${VERDE}11${BRANCO} - Ver Logs do OpenClaw${RESET}"
         echo ""
         echo -e "${AZUL}--- Utilitários ---${RESET}"
-        echo -e "${VERDE}10${BRANCO} - Ver Logs do OpenClaw${RESET}"
-        echo -e "${VERDE}11${BRANCO} - Acessar Terminal do Container${RESET}"
-        echo -e "${VERDE}12${BRANCO} - Reiniciar Gateway${RESET}"
-        echo -e "${VERDE}15${BRANCO} - Exibir Dados de Conexão (Token/URL)${RESET}"
+        echo -e "${VERDE}12${BRANCO} - Acessar Terminal do Container${RESET}"
+        echo -e "${VERDE}13${BRANCO} - Reiniciar Gateway${RESET}"
+        echo -e "${VERDE}14${BRANCO} - Exibir Dados de Conexão (Token/URL)${RESET}"
         echo ""
         echo -e "${AZUL}--- Sistema ---${RESET}"
-        echo -e "${VERMELHO}13${BRANCO} - Limpar VPS (Desinstalar OpenClaw)${RESET}"
-        echo -e "${VERMELHO}14${BRANCO} - Desinstalar Docker (Remove TUDO)${RESET}"
+        echo -e "${VERMELHO}15${BRANCO} - Limpar VPS (Desinstalar OpenClaw)${RESET}"
+        echo -e "${VERMELHO}16${BRANCO} - Desinstalar Docker (Remove TUDO)${RESET}"
         echo -e "${VERDE}0${BRANCO} - Sair${RESET}"
         echo ""
         echo -en "${AMARELO}Opção: ${RESET}"
@@ -1654,6 +1656,10 @@ menu() {
                 read -p "Pressione ENTER para continuar..."
                 ;;
             10)
+                run_dashboard
+                read -p "Pressione ENTER para continuar..."
+                ;;
+            11)
                 log_info "Buscando logs do OpenClaw..."
                 
                 # Tenta logs de Swarm Service primeiro
@@ -1679,31 +1685,27 @@ menu() {
                 fi
                 read -p "Pressione ENTER para continuar..."
                 ;;
-            11)
+            12)
                 enter_shell
                 read -p "Pressione ENTER para continuar..."
                 ;;
-            12)
+            13)
                 check_root
                 restart_gateway
                 read -p "Pressione ENTER para continuar..."
                 ;;
-            15)
+            14)
                 check_root
                 echo -e "${AZUL}Sincronizando e exibindo informações de conexão...${RESET}"
                 setup_security_config "" ""
                 read -p "Pressione ENTER para continuar..."
                 ;;
-            16)
-                run_dashboard
-                read -p "Pressione ENTER para continuar..."
-                ;;
-            13)
+            15)
                 check_root
                 cleanup_vps
                 read -p "Pressione ENTER para continuar..."
                 ;;
-            14)
+            16)
                 check_root
                 uninstall_docker
                 read -p "Pressione ENTER para continuar..."
