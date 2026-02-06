@@ -891,22 +891,12 @@ cleanup_vps() {
     log_info "Removendo volumes persistentes..."
     docker volume rm openclaw_config openclaw_workspace openclaw_home 2>/dev/null || true
 
-    # Pergunta explícita sobre os dados persistentes no Host
-    echo ""
-    echo -e "${VERMELHO}Deseja apagar também os dados persistentes em /root/openclaw?${RESET}"
-    echo -e "${AMARELO}(Isso excluirá TODAS as configurações, chaves e bancos de dados locais)${RESET}"
-    echo -en "${BRANCO}[y/N]: ${RESET}"
-    read -r DELETE_DATA
-
-    if [[ "$DELETE_DATA" =~ ^[Yy]$ ]]; then
-        log_info "Removendo dados persistentes (/root/openclaw)..."
-        rm -rf /root/openclaw
-        log_success "Dados persistentes removidos."
-    else
-        log_info "Dados persistentes mantidos em /root/openclaw."
-    fi
-
-    # 4. Remover Diretório
+    # 4. Remover Dados Persistentes e Credenciais
+    log_info "Removendo dados persistentes (/root/openclaw) e credenciais..."
+    rm -rf /root/openclaw
+    rm -rf /root/dados_vps
+    
+    # 5. Remover Diretório
     if [ -d "$INSTALL_DIR" ]; then
         log_info "Removendo diretório de instalação: $INSTALL_DIR"
         rm -rf "$INSTALL_DIR"
@@ -923,6 +913,7 @@ uninstall_docker() {
     echo -e "  - Docker Engine, CLI, Containerd, Docker Compose"
     echo -e "  - TODOS os containers, imagens, volumes e redes"
     echo -e "  - Diretórios /var/lib/docker e /var/lib/containerd"
+    echo -e "  - Dados do OpenClaw (/root/openclaw e /root/dados_vps)"
     echo ""
     echo -en "${BRANCO}Tem certeza absoluta? [sim/N]: ${RESET}"
     read -r CONFIRM_DOCKER
@@ -943,6 +934,8 @@ uninstall_docker() {
     rm -rf /var/lib/docker
     rm -rf /var/lib/containerd
     rm -rf /etc/docker
+    rm -rf /root/openclaw
+    rm -rf /root/dados_vps
 
     log_success "Docker desinstalado completamente."
 }
