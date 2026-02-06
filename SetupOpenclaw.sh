@@ -842,14 +842,28 @@ deploy_stack_via_api() {
         return
     fi
 
-    # Obter Endpoint ID (com retry)
+    # Obter Endpoint ID (com retry e fallback)
     local endpoint_id=""
-    local max_retries=5
+    local max_retries=15
     local count=0
     
     while [ $count -lt $max_retries ]; do
-        endpoint_id=$(curl -k -s -H "Authorization: Bearer $token" $resolve_arg "$portainer_url/api/endpoints" | jq -r '.[0].Id // empty')
+        # Tenta pegar o primeiro endpoint da lista (padrão)
+        local response=$(curl -k -s -H "Authorization: Bearer $token" $resolve_arg "$portainer_url/api/endpoints")
         
+        # Log para debug se falhar repetidamente (apenas na última tentativa ou se verbose)
+        if [ $count -eq $((max_retries-1)) ]; then
+            log_info "Debug: Resposta de /api/endpoints: $response"
+        fi
+        
+        # Estratégia 1: Primeiro ID da lista
+        endpoint_id=$(echo "$response" | jq -r '.[0].Id // empty')
+        
+        # Estratégia 2: Fallback estilo Orion (busca por nome "primary" ou "local")
+        if [ -z "$endpoint_id" ] || [ "$endpoint_id" == "null" ]; then
+             endpoint_id=$(echo "$response" | jq -r '.[] | select(.Name == "primary" or .Name == "local") | .Id' | head -n 1)
+        fi
+
         if [ -n "$endpoint_id" ] && [ "$endpoint_id" != "null" ]; then
             break
         fi
@@ -1506,15 +1520,18 @@ setup_openclaw() {
             sync_official_skills
             install_initial_skills
             
+            # Garante que a imagem de sandbox esteja pronta
+            setup_sandbox
+            
             echo ""
             echo -en "${BRANCO}Deseja iniciar o Wizard de Configuração (Onboard) agora? [Y/n]: ${RESET}"
             read -r RUN_WIZARD_SA
             
             if [[ "$RUN_WIZARD_SA" =~ ^[Yy]$ || -z "$RUN_WIZARD_SA" ]]; then
-                setup_sandbox
                 run_wizard
             else
-                log_info "Wizard pulado. Você pode executá-lo manualmente depois pela Opção 4."
+                log_info "Wizard pulado. O OpenClaw está rodando mas precisa ser configurado."
+                log_info "Execute 'Opção 4' no menu ou 'docker compose run --rm openclaw-cli configure' manualmente."
             fi
         else
             log_error "Falha ao iniciar containers Standalone."
