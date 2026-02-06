@@ -563,8 +563,20 @@ cleanup_vps() {
     log_info "Removendo volumes persistentes..."
     docker volume rm openclaw_config openclaw_workspace openclaw_home 2>/dev/null || true
 
-    # Opcional: Remover diretórios do host
-    # rm -rf /root/openclaw/.openclaw /root/openclaw/workspace
+    # Pergunta explícita sobre os dados persistentes no Host
+    echo ""
+    echo -e "${VERMELHO}Deseja apagar também os dados persistentes em /root/openclaw?${RESET}"
+    echo -e "${AMARELO}(Isso excluirá TODAS as configurações, chaves e bancos de dados locais)${RESET}"
+    echo -en "${BRANCO}[y/N]: ${RESET}"
+    read -r DELETE_DATA
+
+    if [[ "$DELETE_DATA" =~ ^[Yy]$ ]]; then
+        log_info "Removendo dados persistentes (/root/openclaw)..."
+        rm -rf /root/openclaw
+        log_success "Dados persistentes removidos."
+    else
+        log_info "Dados persistentes mantidos em /root/openclaw."
+    fi
 
     # 4. Remover Diretório
     if [ -d "$INSTALL_DIR" ]; then
