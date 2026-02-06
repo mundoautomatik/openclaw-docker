@@ -200,8 +200,10 @@ services:
         # Canvas Host (Porta 18793) - Requer subdomínio ou path separado se exposto via Traefik
     environment:
       - OPENCLAW_DISABLE_BONJOUR=1
+      # Bind LAN (necessário para Traefik alcançar o container)
+      - OPENCLAW_GATEWAY_BIND=lan
       # Token de Gateway para automação
-      - OPENCLAW_GATEWAY_TOKEN=\${OPENCLAW_GATEWAY_TOKEN:-$gateway_token}
+      - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN:-$gateway_token}
     volumes:
       # Mapeamento direto para persistência no host
       - /root/openclaw/.openclaw:/home/openclaw/.openclaw
