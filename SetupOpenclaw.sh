@@ -58,6 +58,12 @@ check_root() {
         log_error "Este script precisa ser executado como root (sudo)."
         exit 1
     fi
+    
+    # SetupOrion Logic: Garante execução a partir do /root para evitar problemas de permissão/path
+    if [ "$PWD" != "/root" ]; then
+        log_info "Mudando para o diretório /root/ para garantir estabilidade..."
+        cd /root || exit
+    fi
 }
 
 # Adiciona o usuário atual ao grupo docker se necessário
@@ -71,15 +77,23 @@ ensure_docker_permission() {
 }
 
 check_deps() {
-    log_info "Verificando dependências básicas..."
-    local deps=("curl" "git" "jq")
+    log_info "Atualizando repositórios e sistema (SetupOrion Logic)..."
+    apt-get update -qq >/dev/null 2>&1
+    # Upgrade silencioso para garantir patches de segurança, como no SetupOrion
+    DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -qq >/dev/null 2>&1 || log_info "Upgrade de sistema pulado ou finalizado com avisos."
+
+    log_info "Verificando dependências essenciais..."
+    # Lista expandida baseada no SetupOrion-init.sh
+    local deps=("curl" "git" "jq" "apache2-utils" "apt-utils" "dialog" "python3" "neofetch")
+    
     for dep in "${deps[@]}"; do
         if ! command -v "$dep" &> /dev/null; then
             log_info "Instalando $dep..."
-            apt-get update -qq >/dev/null 2>&1
-            apt-get install -y -qq "$dep" >/dev/null 2>&1 || log_error "Falha ao instalar $dep"
+            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$dep" >/dev/null 2>&1 || log_error "Falha ao instalar $dep"
         fi
     done
+    
+    log_success "Dependências verificadas."
 }
 
 # --- Infraestrutura ---
