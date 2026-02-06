@@ -174,6 +174,20 @@ prepare_persistence() {
              jq --arg token "$auth_token" '.gateway.remote.token = $token' "$config_file" > "$tmp_conf" && mv "$tmp_conf" "$config_file"
              log_success "Token do cliente CLI sincronizado."
              final_token="$auth_token"
+        else
+             # Token exists and matches, but we still need to ensure host binding is 0.0.0.0
+             final_token="$auth_token"
+        fi
+        
+        # FIX: Force Host Binding to 0.0.0.0 to allow Traefik/External access
+        # Also ensure remote.token matches auth.token (redundant but safe)
+        if [ -n "$final_token" ]; then
+            local current_host=$(jq -r '.gateway.host // empty' "$config_file" 2>/dev/null)
+            if [ "$current_host" != "0.0.0.0" ]; then
+                log_info "Forçando gateway.host = 0.0.0.0 para permitir acesso externo/Traefik..."
+                local tmp_conf=$(mktemp)
+                jq '.gateway.host = "0.0.0.0"' "$config_file" > "$tmp_conf" && mv "$tmp_conf" "$config_file"
+            fi
         fi
         
         # Save/Update info file if we have a token (either new or synced)
@@ -1569,6 +1583,7 @@ menu() {
                 ;;
             6)
                 check_root
+                check_deps # Garante que jq está instalado
                 approve_device
                 read -p "Pressione ENTER para continuar..."
                 ;;
