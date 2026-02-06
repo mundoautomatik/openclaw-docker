@@ -191,6 +191,17 @@ prepare_persistence() {
     log_success "Diretórios de persistência prontos."
 }
 
+update_dashboard_link() {
+    local domain="$1"
+    local info_file="/root/dados_vps/openclaw.txt"
+    
+    if [ -f "$info_file" ]; then
+        log_info "Atualizando link do dashboard para usar domínio $domain..."
+        # Substitui a URL com IP pela URL com domínio (preservando o token)
+        sed -i "s|http://.*:18789/|https://$domain/|g" "$info_file"
+    fi
+}
+
 detect_swarm_traefik() {
     log_info "Verificando ambiente Swarm e Traefik..."
     
@@ -1051,7 +1062,13 @@ setup_openclaw() {
                 setup_security_config
                 sync_official_skills
                 install_initial_skills
-                echo -e "Acesse em: ${VERDE}http://$DOMAIN${RESET}"
+                
+                # Atualiza link com o domínio
+                update_dashboard_link "$DOMAIN"
+                
+                # Recupera token para exibir link final
+                local final_token=$(grep -A 1 "TOKEN DE ACESSO" /root/dados_vps/openclaw.txt | tail -n 1 | tr -d ' ')
+                echo -e "Acesse em: ${VERDE}https://$DOMAIN/?token=$final_token${RESET}"
             else
                 log_error "Falha no deploy Swarm."
             fi
