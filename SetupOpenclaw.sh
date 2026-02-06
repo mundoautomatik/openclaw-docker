@@ -625,8 +625,8 @@ EOF
     
     for i in $(seq 1 $MAX_RETRIES); do
         # Tenta criar o usuário admin
-        # Removido --resolve para alinhar com SetupOrion e confiar no DNS/Traefik
-        RESPONSE=$(curl -k -s -X POST "https://$PORTAINER_DOMAIN/api/users/admin/init" \
+        # Adicionado --resolve para garantir conexão local com o Traefik (evita erro 404 se DNS não propagou)
+        RESPONSE=$(curl -k -s --resolve "$PORTAINER_DOMAIN:443:127.0.0.1" -X POST "https://$PORTAINER_DOMAIN/api/users/admin/init" \
             -H "Content-Type: application/json" \
             -d "{\"Username\": \"$PORTAINER_USER\", \"Password\": \"$PORTAINER_PASS\"}")
         
@@ -660,7 +660,7 @@ EOF
         # Gerar Token JWT
         log_info "Gerando token de acesso..."
         sleep 5
-        TOKEN=$(curl -k -s -X POST "https://$PORTAINER_DOMAIN/api/auth" \
+        TOKEN=$(curl -k -s --resolve "$PORTAINER_DOMAIN:443:127.0.0.1" -X POST "https://$PORTAINER_DOMAIN/api/auth" \
             -H "Content-Type: application/json" \
             -d "{\"username\":\"$PORTAINER_USER\",\"password\":\"$PORTAINER_PASS\"}" | jq -r .jwt)
             
