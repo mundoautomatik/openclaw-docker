@@ -696,15 +696,31 @@ restart_gateway() {
     log_info "Reiniciando Gateway OpenClaw..."
      
     if docker service ps openclaw_openclaw >/dev/null 2>&1; then
-        log_info "Modo Swarm detectado. Forçando atualização do serviço..."
-        docker service update --force openclaw_openclaw
-        log_success "Serviço atualizado (Rolling Restart iniciado)."
+        log_info "Modo Swarm detectado."
+        local container_id=$(docker ps --filter "name=openclaw_openclaw" --format "{{.ID}}" | head -n 1)
+        if [ -n "$container_id" ]; then
+             log_info "Executando 'openclaw gateway restart' no container..."
+             docker exec "$container_id" openclaw gateway restart
+             log_success "Comando de restart enviado."
+        else
+             log_info "Container não encontrado neste nó. Forçando update do serviço..."
+             docker service update --force openclaw_openclaw
+             log_success "Serviço atualizado."
+        fi
     elif [ -d "$INSTALL_DIR" ]; then
         cd "$INSTALL_DIR" || return
         if docker compose ps | grep -q "openclaw"; then
-            log_info "Modo Standalone detectado. Reiniciando container gateway..."
-            docker compose restart openclaw-gateway
-            log_success "Gateway reiniciado com sucesso."
+            log_info "Modo Standalone detectado. Executando 'openclaw gateway restart'..."
+            # Tenta executar via exec no container rodando
+            local container_id=$(docker ps --filter "name=openclaw" --format "{{.ID}}" | head -n 1)
+            if [ -n "$container_id" ]; then
+                docker exec "$container_id" openclaw gateway restart
+                log_success "Gateway reiniciado via CLI."
+            else
+                # Fallback se não achar o ID mas o compose diz que tá rodando
+                docker compose restart openclaw-gateway
+                log_success "Gateway reiniciado (Container Restart)."
+            fi
         else
              log_error "Nenhum container OpenClaw encontrado."
         fi
