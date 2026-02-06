@@ -970,11 +970,8 @@ setup_openclaw() {
                  echo " DATA DE INSTALAÇÃO: $(date)" >> /root/dados_vps/openclaw.txt
                  echo "================================================================" >> /root/dados_vps/openclaw.txt
             fi
-            if ! grep -q "TOKEN DE ACESSO" /root/dados_vps/openclaw.txt; then
-                echo " TOKEN DE ACESSO (GATEWAY):" >> /root/dados_vps/openclaw.txt
-                echo " $GEN_TOKEN" >> /root/dados_vps/openclaw.txt
-                echo "----------------------------------------------------------------" >> /root/dados_vps/openclaw.txt
-            fi
+            
+            # Não salvamos o GEN_TOKEN como token final pois o Wizard irá sobrescrever
             chmod 600 /root/dados_vps/openclaw.txt
 
             generate_swarm_config "$TRAEFIK_NET" "$DOMAIN" "$AUTH_HASH" "$GEN_TOKEN"
@@ -992,21 +989,16 @@ setup_openclaw() {
             
             if [ $? -eq 0 ]; then
                 log_success "OpenClaw implantado no Swarm!"
-                setup_security_config "$GEN_TOKEN" "$DOMAIN"
                 sync_official_skills
                 install_initial_skills
                 
-                # Recupera token para exibir link final (caso tenha mudado)
-                local final_token=$(grep -A 1 "TOKEN DE ACESSO" /root/dados_vps/openclaw.txt | tail -n 1 | tr -d ' ')
-                echo -e "Acesse em: ${VERDE}https://$DOMAIN/?token=$final_token${RESET}"
+                echo ""
+                echo -e "${AMARELO}IMPORTANTE: Instalação da Stack concluída.${RESET}"
+                echo -e "${BRANCO}Iniciando agora o Wizard de Configuração Oficial (Obrigatório)...${RESET}"
+                echo ""
+                sleep 2
                 
-                echo ""
-                echo -e "${AMARELO}IMPORTANTE: Para concluir a instalação, siga os passos abaixo:${RESET}"
-                echo -e "${BRANCO}1. Execute o processo de integração:${RESET} ${VERDE}openclaw onboard --install-daemon${RESET} (Use a Opção 4 do Menu)"
-                echo -e "${BRANCO}2. Verificação rápida:${RESET} ${VERDE}openclaw doctor${RESET} (Via terminal do container - Opção 9)"
-                echo -e "${BRANCO}3. Verificar integridade:${RESET} ${VERDE}openclaw status${RESET} + ${VERDE}openclaw health${RESET}"
-                echo -e "${BRANCO}4. Painel de controle:${RESET} ${VERDE}openclaw dashboard${RESET} (Ou acesse a URL acima)"
-                echo ""
+                run_wizard
             else
                 log_error "Falha no deploy Swarm."
             fi
@@ -1017,30 +1009,14 @@ setup_openclaw() {
     # Modo Standalone (Padrão)
     log_info "Baixando imagem oficial e iniciando containers (Standalone)..."
     
-    # Gerar Token se não existir (caso não tenha passado pelo fluxo Swarm)
+    # Gerar Token temporário para boot inicial
     if [ -z "$GEN_TOKEN" ]; then
-        log_info "Gerando token de acesso seguro..."
         if command -v openssl &> /dev/null; then
             GEN_TOKEN=$(openssl rand -hex 16)
         else
             GEN_TOKEN=$(date +%s%N | sha256sum | base64 | head -c 32)
         fi
     fi
-
-    # Salvar token para referência
-    mkdir -p /root/dados_vps
-    if [ ! -f /root/dados_vps/openclaw.txt ]; then
-        echo "================================================================" > /root/dados_vps/openclaw.txt
-        echo " DATA DE INSTALAÇÃO: $(date)" >> /root/dados_vps/openclaw.txt
-        echo "================================================================" >> /root/dados_vps/openclaw.txt
-    fi
-    # Evita duplicar se já existir
-    if ! grep -q "TOKEN DE ACESSO" /root/dados_vps/openclaw.txt; then
-        echo " TOKEN DE ACESSO (GATEWAY):" >> /root/dados_vps/openclaw.txt
-        echo " $GEN_TOKEN" >> /root/dados_vps/openclaw.txt
-        echo "----------------------------------------------------------------" >> /root/dados_vps/openclaw.txt
-    fi
-    chmod 600 /root/dados_vps/openclaw.txt
 
     # Define variáveis para o docker-compose.yml usar paths do host
     export OPENCLAW_GATEWAY_TOKEN="$GEN_TOKEN"
@@ -1051,21 +1027,16 @@ setup_openclaw() {
     
     if [ $? -eq 0 ]; then
         log_success "OpenClaw iniciado com sucesso!"
-        setup_security_config "$GEN_TOKEN"
         sync_official_skills
         install_initial_skills
         echo ""
-        echo -e "${BRANCO}Comandos úteis:${RESET}"
-        echo -e "  - Ver logs: ${VERDE}docker compose logs -f${RESET}"
-        echo -e "  - Adicionar Skill: ${VERDE}./add_skill.sh <url_git>${RESET}"
-        echo -e "  - Scan Manual: ${VERDE}docker compose exec openclaw /usr/local/bin/scan_skills.sh${RESET}"
+        echo -e "${AMARELO}IMPORTANTE: Containers iniciados.${RESET}"
+        echo -e "${BRANCO}Iniciando agora o Wizard de Configuração Oficial (Obrigatório)...${RESET}"
         echo ""
-        echo -e "${AMARELO}IMPORTANTE: Para concluir a instalação, siga os passos abaixo:${RESET}"
-        echo -e "${BRANCO}1. Execute o processo de integração:${RESET} ${VERDE}openclaw onboard --install-daemon${RESET} (Use a Opção 4 do Menu)"
-        echo -e "${BRANCO}2. Verificação rápida:${RESET} ${VERDE}openclaw doctor${RESET} (Via terminal do container - Opção 9)"
-        echo -e "${BRANCO}3. Verificar integridade:${RESET} ${VERDE}openclaw status${RESET} + ${VERDE}openclaw health${RESET}"
-        echo -e "${BRANCO}4. Painel de controle:${RESET} ${VERDE}openclaw dashboard${RESET} (Ou acesse via browser)"
-        echo ""
+        sleep 2
+        
+        setup_sandbox
+        run_wizard
     else
         log_error "Falha ao iniciar o OpenClaw."
     fi
