@@ -662,6 +662,57 @@ run_wizard() {
     fi
 }
 
+# --- Utilitários de Canal e Gateway ---
+
+generate_whatsapp_qrcode() {
+    log_info "Iniciando geração de QR Code do WhatsApp..."
+    
+    if [ ! -d "$INSTALL_DIR" ]; then
+        log_error "Diretório de instalação não encontrado ($INSTALL_DIR)."
+        return
+    fi
+    
+    cd "$INSTALL_DIR" || return
+
+    # Verifica se estamos em Swarm ou Standalone
+    if docker service ps openclaw_openclaw >/dev/null 2>&1; then
+        # Swarm Mode
+        local container_id=$(docker ps --filter "name=openclaw_openclaw" --format "{{.ID}}" | head -n 1)
+        if [ -n "$container_id" ]; then
+             log_info "Executando comando no container do Swarm..."
+             docker exec -it "$container_id" openclaw channels login --channel whatsapp
+        else
+             log_error "Container do serviço OpenClaw não encontrado neste nó (pode estar em outro nó do cluster)."
+        fi
+    else
+        # Standalone Mode
+        log_info "Executando via container CLI..."
+        # Usa o serviço CLI definido no compose para garantir o ambiente correto
+        docker compose run --rm openclaw-cli channels login --channel whatsapp
+    fi
+}
+
+restart_gateway() {
+    log_info "Reiniciando Gateway OpenClaw..."
+     
+    if docker service ps openclaw_openclaw >/dev/null 2>&1; then
+        log_info "Modo Swarm detectado. Forçando atualização do serviço..."
+        docker service update --force openclaw_openclaw
+        log_success "Serviço atualizado (Rolling Restart iniciado)."
+    elif [ -d "$INSTALL_DIR" ]; then
+        cd "$INSTALL_DIR" || return
+        if docker compose ps | grep -q "openclaw"; then
+            log_info "Modo Standalone detectado. Reiniciando container gateway..."
+            docker compose restart openclaw-gateway
+            log_success "Gateway reiniciado com sucesso."
+        else
+             log_error "Nenhum container OpenClaw encontrado."
+        fi
+    else
+        log_error "Instalação não encontrada."
+    fi
+}
+
 # --- Gerenciamento de Skills ---
 
 manage_skills() {
@@ -751,7 +802,9 @@ menu() {
         echo -e "${VERDE}4${BRANCO} - Acessar Terminal do Container${RESET}"
         echo -e "${VERDE}5${BRANCO} - Gerenciar Skills (Plugins)${RESET}"
         echo -e "${VERDE}6${BRANCO} - Rodar Setup Wizard (Onboard Oficial)${RESET}"
-        echo -e "${VERMELHO}7${BRANCO} - Limpar VPS (Remover OpenClaw)${RESET}"
+        echo -e "${VERDE}7${BRANCO} - Gerar QR Code WhatsApp${RESET}"
+        echo -e "${VERDE}8${BRANCO} - Reiniciar Gateway${RESET}"
+        echo -e "${VERMELHO}9${BRANCO} - Limpar VPS (Remover OpenClaw)${RESET}"
         echo -e "${VERDE}0${BRANCO} - Sair${RESET}"
         echo ""
         echo -en "${AMARELO}Opção: ${RESET}"
@@ -812,6 +865,16 @@ menu() {
                 read -p "Pressione ENTER para continuar..."
                 ;;
             7)
+                check_root
+                generate_whatsapp_qrcode
+                read -p "Pressione ENTER para continuar..."
+                ;;
+            8)
+                check_root
+                restart_gateway
+                read -p "Pressione ENTER para continuar..."
+                ;;
+            9)
                 check_root
                 cleanup_vps
                 read -p "Pressione ENTER para continuar..."
