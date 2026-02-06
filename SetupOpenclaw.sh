@@ -2191,6 +2191,7 @@ menu() {
                 echo -e "${BRANCO}Qual tipo de ambiente deseja preparar?${RESET}"
                 echo -e "${VERDE}1${BRANCO} - Standalone (Docker + Portainer Local)${RESET}"
                 echo -e "${VERDE}2${BRANCO} - Swarm (Cluster + Traefik + Portainer)${RESET}"
+                echo -e "${VERDE}0${BRANCO} - Voltar${RESET}"
                 echo ""
                 echo -en "${AMARELO}Opção: ${RESET}"
                 read -r ENV_OPT
@@ -2198,13 +2199,17 @@ menu() {
                 if [ "$ENV_OPT" == "1" ]; then
                      install_docker
                      install_portainer_standalone
+                     read -p "Pressione ENTER para continuar..."
                 elif [ "$ENV_OPT" == "2" ]; then
                      install_full_stack_swarm
+                     read -p "Pressione ENTER para continuar..."
+                elif [ "$ENV_OPT" == "0" ]; then
+                     # Apenas retorna ao loop principal
+                     :
                 else
                      log_error "Opção inválida."
+                     read -p "Pressione ENTER para continuar..."
                 fi
-                
-                read -p "Pressione ENTER para continuar..."
                 ;;
             2)
                 check_root
