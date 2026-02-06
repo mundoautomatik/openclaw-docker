@@ -200,6 +200,31 @@ install_docker() {
     else
         log_info "Docker já instalado."
     fi
+
+    # FIX: Traefik Client Version 1.24 Error (SetupOrion Logic)
+    # Força o Daemon a aceitar API 1.24, evitando erro "client version 1.24 is too old"
+    log_info "Verificando e aplicando patch de compatibilidade API Docker..."
+    
+    mkdir -p /etc/systemd/system/docker.service.d
+    
+    # Cria/Atualiza override
+    cat > /etc/systemd/system/docker.service.d/override.conf <<EOF
+[Service]
+Environment=DOCKER_MIN_API_VERSION=1.24
+EOF
+
+    # Recarrega daemon e reinicia docker para aplicar
+    # Apenas reinicia se a configuração mudou ou se necessário, mas para garantir fazemos sempre no setup
+    systemctl daemon-reload >/dev/null 2>&1
+    systemctl restart docker >/dev/null 2>&1
+    
+    if systemctl show --property=Environment docker | grep -q "DOCKER_MIN_API_VERSION=1.24"; then
+        log_success "Patch de API Docker aplicado com sucesso."
+    else
+        log_warning "Atenção: Não foi possível confirmar o Patch de API Docker."
+    fi
+    
+    sleep 5
 }
 
 setup_security_config() {
