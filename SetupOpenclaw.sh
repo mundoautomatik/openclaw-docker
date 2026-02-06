@@ -1037,6 +1037,7 @@ setup_openclaw() {
                 echo ""
                 sleep 2
                 
+                setup_sandbox
                 run_wizard
             else
                 log_error "Falha no deploy Swarm."
