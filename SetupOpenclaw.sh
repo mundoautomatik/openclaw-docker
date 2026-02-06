@@ -984,7 +984,12 @@ setup_openclaw() {
     
     # Preparar persistência (diretórios no host)
     prepare_persistence
-
+    
+    # FIX: Corrigir permissões de propriedade para o usuário openclaw (UID 1000)
+    # Isso resolve erros como "EACCES: permission denied, watch '/home/openclaw/.openclaw'"
+    log_info "Ajustando permissões de propriedade (chown 1000:1000) em /root/openclaw..."
+    chown -R 1000:1000 /root/openclaw
+    
     # Copiar skills iniciais para a persistência (evita montar volume nested/circular)
     if [ -d "skills" ]; then
         log_info "Copiando skills iniciais para o workspace..."
