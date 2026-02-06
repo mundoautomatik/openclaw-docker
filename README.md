@@ -19,8 +19,9 @@ Este repositório contém a configuração completa para rodar o **OpenClaw** em
 ## 🛠️ Instalação e Uso
 
 ### Pré-requisitos
-- Docker & Docker Compose instalados.
-- Ambiente Linux (Ubuntu/Debian recomendado).
+- Um servidor VPS (Ubuntu/Debian recomendado), preferencialmente "limpo".
+- Acesso root (ou sudo sem senha).
+- **Não é necessário instalar nada antes:** O script instalará automaticamente Docker, Docker Compose, Git, Swarm, Traefik, Portainer e todas as dependências.
 
 ### ☁️ Instalação em VPS (Produção)
 
