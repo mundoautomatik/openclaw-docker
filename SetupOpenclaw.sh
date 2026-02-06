@@ -1279,15 +1279,33 @@ run_wizard() {
     prepare_persistence
 
     log_info "Executando 'openclaw onboard' via container temporário..."
-    echo -e "${AMARELO}Siga as instruções na tela. Pressione Ctrl+C para cancelar.${RESET}"
+    echo -e "${AMARELO}Siga as instruções na tela.${RESET}"
+    echo -e "${AMARELO}NOTA: Se o processo exibir 'Onboarding complete' mas não sair automaticamente,${RESET}"
+    echo -e "${AMARELO}pressione Ctrl+C para finalizar e continuar o setup.${RESET}"
     echo -e "${AMARELO}O assistente pode demorar alguns instantes para iniciar. Por favor, aguarde...${RESET}"
     echo ""
     
     # Executa o serviço CLI definido no docker-compose.yml
     docker compose run --rm openclaw-cli onboard
+    local exit_code=$?
     
-    if [ $? -eq 0 ]; then
-        log_success "Wizard concluído com sucesso."
+    # Validação de sucesso (mesmo com Ctrl+C)
+    local config_valid=0
+    if [ -f "/root/openclaw/.openclaw/openclaw.json" ]; then
+         # Verifica se existe token (fallback simples via grep para não depender de jq aqui)
+         if grep -q "\"token\":" "/root/openclaw/.openclaw/openclaw.json"; then
+             config_valid=1
+         fi
+    fi
+    
+    if [ $exit_code -eq 0 ] || [ $config_valid -eq 1 ]; then
+        if [ $exit_code -ne 0 ]; then
+             echo ""
+             log_warn "O Wizard foi interrompido, mas uma configuração válida foi detectada."
+             log_info "Prosseguindo com a pós-instalação..."
+        else
+             log_success "Wizard concluído com sucesso."
+        fi
         
         # --- FIX: Forçar Bind LAN no openclaw.json ---
         # O Wizard gera o arquivo com bind="loopback" por padrão.
