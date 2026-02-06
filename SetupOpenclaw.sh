@@ -817,10 +817,17 @@ deploy_stack_via_api() {
     
     local portainer_url="https://$p_domain"
     
+    # Preparar argumento resolve correto para curl
+    # Formato: host:port:address
+    local p_host=$(echo "$p_domain" | cut -d: -f1)
+    local p_port=$(echo "$p_domain" | cut -d: -f2 -s)
+    [ -z "$p_port" ] && p_port="443"
+    local resolve_arg="--resolve $p_host:$p_port:127.0.0.1"
+    
     # Se não temos token, tenta gerar
     if [ -z "$token" ] && [ -n "$p_user" ] && [ -n "$p_pass" ]; then
          log_info "Gerando token temporário para deploy via API..."
-         token=$(curl -k -s --resolve "$p_domain:443:127.0.0.1" -X POST "$portainer_url/api/auth" \
+         token=$(curl -k -s $resolve_arg -X POST "$portainer_url/api/auth" \
             -H "Content-Type: application/json" \
             -d "{\"username\":\"$p_user\",\"password\":\"$p_pass\"}" | jq -r .jwt)
     fi
@@ -835,11 +842,24 @@ deploy_stack_via_api() {
         return
     fi
 
-    # Obter Endpoint ID (assume local/primary como o primeiro endpoint)
-    local endpoint_id=$(curl -k -s -H "Authorization: Bearer $token" --resolve "$p_domain:443:127.0.0.1" "$portainer_url/api/endpoints" | jq -r '.[0].Id')
+    # Obter Endpoint ID (com retry)
+    local endpoint_id=""
+    local max_retries=5
+    local count=0
+    
+    while [ $count -lt $max_retries ]; do
+        endpoint_id=$(curl -k -s -H "Authorization: Bearer $token" $resolve_arg "$portainer_url/api/endpoints" | jq -r '.[0].Id // empty')
+        
+        if [ -n "$endpoint_id" ] && [ "$endpoint_id" != "null" ]; then
+            break
+        fi
+        
+        sleep 2
+        count=$((count+1))
+    done
     
     if [ -z "$endpoint_id" ] || [ "$endpoint_id" == "null" ]; then
-         log_warn "Falha ao obter Endpoint ID. Usando deploy via CLI."
+         log_warn "Falha ao obter Endpoint ID após $max_retries tentativas. Usando deploy via CLI."
          if [ "$is_swarm" = true ]; then
              docker stack deploy --prune --resolve-image always -c "$compose_file" "$stack_name"
          else
@@ -856,7 +876,7 @@ deploy_stack_via_api() {
     log_info "Tentando deploy via Portainer API (Stack: $stack_name, Endpoint: $endpoint_id, Mode: $(if $is_swarm; then echo Swarm; else echo Standalone; fi))..."
 
     # Verificar se a stack já existe
-    local stack_id=$(curl -k -s -H "Authorization: Bearer $token" --resolve "$p_domain:443:127.0.0.1" "$portainer_url/api/stacks" | jq -r --arg name "$stack_name" '.[] | select(.Name == $name) | .Id')
+    local stack_id=$(curl -k -s -H "Authorization: Bearer $token" $resolve_arg "$portainer_url/api/stacks" | jq -r --arg name "$stack_name" '.[] | select(.Name == $name) | .Id')
 
     if [ -n "$stack_id" ] && [ "$stack_id" != "null" ]; then
          log_info "Stack '$stack_name' encontrada (ID: $stack_id). Atualizando via API..."
@@ -870,7 +890,7 @@ deploy_stack_via_api() {
          local http_code=$(curl -s -o "$response_output" -w "%{http_code}" -k -X PUT \
             -H "Authorization: Bearer $token" \
             -H "Content-Type: application/json" \
-            --resolve "$p_domain:443:127.0.0.1" \
+            $resolve_arg \
             -d "$payload" \
             "$portainer_url/api/stacks/$stack_id?endpointId=$endpoint_id" 2> "$error_output")
             
@@ -893,11 +913,11 @@ deploy_stack_via_api() {
         if [ "$is_swarm" = true ]; then
             # SWARM DEPLOY
             # Obter Swarm ID
-            local swarm_id=$(curl -k -s -H "Authorization: Bearer $token" --resolve "$p_domain:443:127.0.0.1" "$portainer_url/api/endpoints/$endpoint_id/docker/swarm" | jq -r .ID)
+            local swarm_id=$(curl -k -s -H "Authorization: Bearer $token" $resolve_arg "$portainer_url/api/endpoints/$endpoint_id/docker/swarm" | jq -r .ID)
             
             http_code=$(curl -s -o "$response_output" -w "%{http_code}" -k -X POST \
             -H "Authorization: Bearer $token" \
-            --resolve "$p_domain:443:127.0.0.1" \
+            $resolve_arg \
             -F "Name=$stack_name" \
             -F "file=@$(pwd)/$compose_file" \
             -F "SwarmID=$swarm_id" \
@@ -918,7 +938,7 @@ deploy_stack_via_api() {
             
             http_code=$(curl -s -o "$response_output" -w "%{http_code}" -k -X POST \
             -H "Authorization: Bearer $token" \
-            --resolve "$p_domain:443:127.0.0.1" \
+            $resolve_arg \
             -F "Name=$stack_name" \
             -F "file=@$(pwd)/$compose_file" \
             -F "endpointId=$endpoint_id" \
