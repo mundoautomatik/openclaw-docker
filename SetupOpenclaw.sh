@@ -262,6 +262,7 @@ EOF
 
 setup_security_config() {
     local gen_token="$1"
+    local domain_override="$2"
     log_info "Verificando configuração de segurança..."
     
     # Aguarda o container subir (tentativa simples)
@@ -297,10 +298,17 @@ setup_security_config() {
     if [ -n "$auth_token" ]; then
         log_info "Token de segurança detectado."
         
-        # Detectar IP Externo para facilitar o acesso
-        local PUBLIC_IP="LOCALHOST"
-        if command -v curl &> /dev/null; then
-            PUBLIC_IP=$(curl -s --connect-timeout 3 ifconfig.me || echo "LOCALHOST")
+        local BASE_URL=""
+        if [ -n "$domain_override" ]; then
+             # Modo Swarm/Domínio: Não usa IP/Porta direta
+             BASE_URL="https://$domain_override"
+        else
+            # Modo Standalone: Detectar IP Externo para facilitar o acesso
+            local PUBLIC_IP="LOCALHOST"
+            if command -v curl &> /dev/null; then
+                PUBLIC_IP=$(curl -s --connect-timeout 3 ifconfig.me || echo "LOCALHOST")
+            fi
+            BASE_URL="http://$PUBLIC_IP:18789"
         fi
         
         # Salvar info para o usuário (apenas leitura/display)
@@ -312,7 +320,7 @@ setup_security_config() {
         echo " $auth_token" >> /root/dados_vps/openclaw.txt
         echo "----------------------------------------------------------------" >> /root/dados_vps/openclaw.txt
         echo " LINK DIRETO DO DASHBOARD:" >> /root/dados_vps/openclaw.txt
-        echo " http://$PUBLIC_IP:18789/?token=$auth_token" >> /root/dados_vps/openclaw.txt
+        echo " $BASE_URL/?token=$auth_token" >> /root/dados_vps/openclaw.txt
         echo "================================================================" >> /root/dados_vps/openclaw.txt
         chmod 600 /root/dados_vps/openclaw.txt
 
@@ -980,14 +988,11 @@ setup_openclaw() {
             
             if [ $? -eq 0 ]; then
                 log_success "OpenClaw implantado no Swarm!"
-                setup_security_config "$GEN_TOKEN"
+                setup_security_config "$GEN_TOKEN" "$DOMAIN"
                 sync_official_skills
                 install_initial_skills
                 
-                # Atualiza link com o domínio
-                update_dashboard_link "$DOMAIN"
-                
-                # Recupera token para exibir link final
+                # Recupera token para exibir link final (caso tenha mudado)
                 local final_token=$(grep -A 1 "TOKEN DE ACESSO" /root/dados_vps/openclaw.txt | tail -n 1 | tr -d ' ')
                 echo -e "Acesse em: ${VERDE}https://$DOMAIN/?token=$final_token${RESET}"
                 
