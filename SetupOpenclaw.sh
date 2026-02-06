@@ -402,6 +402,37 @@ wait_stack() {
 install_full_stack_swarm() {
     log_info "Iniciando Setup Completo (Docker Swarm + Portainer + Traefik + OpenClaw)..."
     
+    # 0. Verificar conflitos / Limpeza prévia
+    if docker info >/dev/null 2>&1 && docker stack ls >/dev/null 2>&1; then
+        if docker stack ls | grep -qE "openclaw|traefik|portainer"; then
+            echo ""
+            echo -e "${AMARELO}Detectamos stacks existentes (openclaw, traefik ou portainer).${RESET}"
+            echo -e "${VERMELHO}Para uma 'Instalação Completa', é recomendado limpar o ambiente anterior.${RESET}"
+            echo -en "${BRANCO}Deseja remover as stacks antigas antes de continuar? [y/N]: ${RESET}"
+            read -r CLEAN_INSTALL
+            
+            if [[ "$CLEAN_INSTALL" =~ ^[Yy]$ ]]; then
+                log_info "Realizando limpeza de stacks..."
+                docker stack rm openclaw traefik portainer 2>/dev/null
+                log_info "Aguardando remoção dos serviços (20s)..."
+                sleep 20
+                
+                # Opcional: Remover volumes se o usuário quiser reset total
+                echo -en "${VERMELHO}Deseja apagar também os DADOS/VOLUMES antigos? (Irreversível) [y/N]: ${RESET}"
+                read -r WIPE_DATA
+                if [[ "$WIPE_DATA" =~ ^[Yy]$ ]]; then
+                     docker volume rm openclaw_config openclaw_workspace openclaw_home volume_swarm_certificates portainer_data 2>/dev/null || true
+                     rm -rf /root/openclaw
+                     log_success "Dados antigos removidos."
+                else
+                     log_info "Volumes de dados foram mantidos."
+                fi
+            else
+                log_info "Continuando sem limpeza (pode haver conflitos)..."
+            fi
+        fi
+    fi
+
     # 1. Instalar Docker
     install_docker
     
