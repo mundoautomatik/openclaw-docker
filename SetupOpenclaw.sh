@@ -104,6 +104,31 @@ prepare_persistence() {
     # Cria diretórios no host
     mkdir -p /root/openclaw/.openclaw/workspace
     
+    # Check and fix openclaw.json
+    local config_file="/root/openclaw/.openclaw/openclaw.json"
+    
+    if [ -f "$config_file" ]; then
+        log_info "Verificando configuração existente em $config_file..."
+        # Backup before edit
+        cp "$config_file" "${config_file}.bak"
+        
+        # Remove invalid 'llm' keys if present
+        if grep -q '"llm"' "$config_file"; then
+             log_warn "Detectada configuração 'llm' obsoleta. Removendo para evitar crash..."
+             # Use jq to safely remove keys
+             local tmp=$(mktemp)
+             jq 'del(.agents.defaults.llm) | del(.llm)' "$config_file" > "$tmp" && mv "$tmp" "$config_file"
+             rm -f "$tmp"
+             log_success "Configuração corrigida."
+        fi
+    else
+        # Tenta copiar defaults se existir no diretório atual
+        if [ -f "openclaw.defaults.json" ]; then
+             log_info "Copiando configuração padrão para $config_file..."
+             cp "openclaw.defaults.json" "$config_file"
+        fi
+    fi
+    
     # Ajusta permissões para o usuário do container (UID 1000)
     # Isso evita erros de EACCES/Permission Denied
     chown -R 1000:1000 /root/openclaw

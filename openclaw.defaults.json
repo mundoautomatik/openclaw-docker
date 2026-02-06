@@ -4,20 +4,6 @@
       "sandbox": {
         "mode": "all",
         "workspaceAccess": "rw"
-      },
-      "llm": {
-        "provider": "openai",
-        "model": "gpt-4o"
-      }
-    }
-  },
-  "llm": {
-    "providers": {
-      "openai": {
-        "apiKey": "sk-YOUR_OPENAI_KEY_HERE"
-      },
-      "anthropic": {
-        "apiKey": "sk-ant-YOUR_ANTHROPIC_KEY_HERE"
       }
     }
   },
