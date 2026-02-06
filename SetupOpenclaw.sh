@@ -376,29 +376,40 @@ build_image() {
 # --- Helpers ---
 
 wait_stack() {
-    local stack_name="$1"
-    local max_retries=30
-    local count=0
-    
-    log_info "Aguardando serviços da stack '$stack_name'..."
-    
-    while [ $count -lt $max_retries ]; do
-        # Verifica se todos os serviços da stack têm réplicas rodando
-        local services_total=$(docker stack services "$stack_name" --format "{{.Replicas}}" | wc -l)
-        local services_running=$(docker stack services "$stack_name" --format "{{.Replicas}}" | grep -v "0/0" | grep -v "0/" | wc -l)
-        
-        if [ "$services_total" -gt 0 ] && [ "$services_total" -eq "$services_running" ]; then
-            log_success "Stack '$stack_name' está operacional."
-            return 0
-        fi
-        
-        echo -n "."
-        sleep 5
-        count=$((count + 1))
+    log_info "Aguardando serviços... (Se demorar > 5min, algo deu errado)"
+    declare -A services_status
+
+    # Inicializa o status de todos os serviços como "pendente"
+    for service in "$@"; do
+        services_status["$service"]="pendente"
     done
-    
-    log_error "Timeout aguardando stack '$stack_name'."
-    return 1
+
+    while true; do
+        all_active=true
+
+        for service in "${!services_status[@]}"; do
+            # Verifica se tem réplica 1/1 (ativo)
+            if docker service ls --filter "name=$service" | grep -q "1/1"; then
+                if [ "${services_status["$service"]}" != "ativo" ]; then
+                    log_success "O serviço $service está online."
+                    services_status["$service"]="ativo"
+                fi
+            else
+                if [ "${services_status["$service"]}" != "pendente" ]; then
+                    services_status["$service"]="pendente"
+                fi
+                all_active=false
+            fi
+        done
+
+        # Sai do loop quando todos os serviços estiverem ativos
+        if $all_active; then
+            sleep 1
+            break
+        fi
+        sleep 30
+        echo -n "."
+    done
 }
 
 # --- Instalação Completa (Swarm + Portainer + Traefik) ---
@@ -503,10 +514,9 @@ services:
       - "--certificatesresolvers.letsencryptresolver.acme.httpchallenge.entrypoint=web"
       - "--certificatesresolvers.letsencryptresolver.acme.storage=/etc/traefik/letsencrypt/acme.json"
       - "--certificatesresolvers.letsencryptresolver.acme.email=$EMAIL_SSL"
-      - "--log.level=INFO"
-      - "--accesslog=true"
+      - "--log.level=DEBUG"
     volumes:
-      - volume_swarm_certificates:/etc/traefik/letsencrypt
+      - vol_certificates:/etc/traefik/letsencrypt
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - $NETWORK_NAME
@@ -519,21 +529,27 @@ services:
         mode: host
     deploy:
       placement:
-        constraints: [node.role == manager]
+        constraints:
+          - node.role == manager
       labels:
         - "traefik.enable=true"
-        - "traefik.http.routers.traefik-dashboard.rule=Host(\`traefik.localhost\`)"
-        - "traefik.http.routers.traefik-dashboard.service=api@internal"
-        - "traefik.http.routers.traefik-dashboard.entrypoints=websecure"
-        - "traefik.http.routers.traefik-dashboard.tls.certresolver=letsencryptresolver"
+        - "traefik.http.middlewares.redirect-https.redirectscheme.scheme=https"
+        - "traefik.http.middlewares.redirect-https.redirectscheme.permanent=true"
+        - "traefik.http.routers.http-catchall.rule=Host(\`{host:.+}\`)"
+        - "traefik.http.routers.http-catchall.entrypoints=web"
+        - "traefik.http.routers.http-catchall.middlewares=redirect-https@docker"
+        - "traefik.http.routers.http-catchall.priority=1"
 
 volumes:
-  volume_swarm_certificates:
+  vol_certificates:
     external: true
+    name: volume_swarm_certificates
 
 networks:
   $NETWORK_NAME:
     external: true
+    attachable: true
+    name: $NETWORK_NAME
 EOF
 
     log_info "Implantando Traefik..."
@@ -546,7 +562,7 @@ EOF
 version: "3.7"
 services:
   agent:
-    image: portainer/agent:lts
+    image: portainer/agent:latest
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /var/lib/docker/volumes:/var/lib/docker/volumes
@@ -558,7 +574,7 @@ services:
         constraints: [node.platform.os == linux]
 
   portainer:
-    image: portainer/portainer-ce:lts
+    image: portainer/portainer-ce:latest
     command: -H tcp://tasks.agent:9001 --tlsskipverify
     volumes:
       - portainer_data:/data
@@ -577,33 +593,40 @@ services:
         - "traefik.http.routers.portainer.service=portainer"
         - "traefik.docker.network=$NETWORK_NAME"
         - "traefik.http.routers.portainer.entrypoints=websecure"
+        - "traefik.http.routers.portainer.priority=1"
 
 volumes:
   portainer_data:
     external: true
+    name: portainer_data
 
 networks:
   $NETWORK_NAME:
     external: true
+    attachable: true
+    name: $NETWORK_NAME
 EOF
 
     log_info "Implantando Portainer..."
     docker stack deploy -c portainer.yaml portainer
     
-    log_info "Aguardando Portainer inicializar completamente (30s)..."
+    log_info "Aguardando Portainer inicializar completamente..."
     wait_stack "portainer"
-    sleep 30 # Tempo para o Portainer subir o DB interno e Traefik rotear
+    sleep 5
     
     # 7. Criar Admin Portainer
+    log_info "Preparando para criar conta admin no Portainer (30s)..."
+    sleep 30
+
     log_info "Configurando usuário admin do Portainer..."
-    local MAX_RETRIES=20
+    local MAX_RETRIES=4
+    local DELAY=15
     local CONTA_CRIADA=false
     
     for i in $(seq 1 $MAX_RETRIES); do
         # Tenta criar o usuário admin
-        # Usa --resolve para garantir que batemos no Traefik localmente, sem depender de DNS externo
-        # Redireciona stderr para stdout para capturar erros de conexão verbose se necessário, mas -s silencia o progresso
-        RESPONSE=$(curl -k -s --resolve "$PORTAINER_DOMAIN:443:127.0.0.1" -X POST "https://$PORTAINER_DOMAIN/api/users/admin/init" \
+        # Removido --resolve para alinhar com SetupOrion e confiar no DNS/Traefik
+        RESPONSE=$(curl -k -s -X POST "https://$PORTAINER_DOMAIN/api/users/admin/init" \
             -H "Content-Type: application/json" \
             -d "{\"Username\": \"$PORTAINER_USER\", \"Password\": \"$PORTAINER_PASS\"}")
         
@@ -613,23 +636,17 @@ EOF
             CONTA_CRIADA=true
             break
         elif echo "$RESPONSE" | grep -q "Users already exists"; then
-             # Nota: Portainer retorna "Users already exists" ou erro similar code 409
             log_info "Usuário admin já existe no Portainer."
             CONTA_CRIADA=true
             break
         else
-            log_info "Tentativa $i/$MAX_RETRIES falhou. Retentando em 15s..."
-            # Tenta extrair mensagem de erro do JSON se houver
-            local ERR_MSG=$(echo "$RESPONSE" | grep -o '"err": *"[^"]*"' | cut -d'"' -f4)
-            if [ -n "$ERR_MSG" ]; then
-                log_info "Erro API: $ERR_MSG"
-                if [[ "$ERR_MSG" == *"User already exists"* ]]; then
-                     log_info "Usuário detectado via mensagem de erro."
-                     CONTA_CRIADA=true
-                     break
-                fi
+            log_info "Tentativa $i/$MAX_RETRIES falhou. Retentando em ${DELAY}s..."
+            # Se for a última tentativa, exibe erro
+            if [ $i -eq $MAX_RETRIES ]; then
+                 log_error "Não foi possível criar a conta de administrador após $MAX_RETRIES tentativas."
+                 log_error "Erro retornado: $RESPONSE"
             fi
-            sleep 15
+            sleep $DELAY
         fi
     done
 
@@ -642,7 +659,8 @@ EOF
     if [ "$CONTA_CRIADA" = true ]; then
         # Gerar Token JWT
         log_info "Gerando token de acesso..."
-        TOKEN=$(curl -k -s --resolve "$PORTAINER_DOMAIN:443:127.0.0.1" -X POST "https://$PORTAINER_DOMAIN/api/auth" \
+        sleep 5
+        TOKEN=$(curl -k -s -X POST "https://$PORTAINER_DOMAIN/api/auth" \
             -H "Content-Type: application/json" \
             -d "{\"username\":\"$PORTAINER_USER\",\"password\":\"$PORTAINER_PASS\"}" | jq -r .jwt)
             
