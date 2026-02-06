@@ -113,73 +113,6 @@ prepare_persistence() {
     # Cria diretórios no host
     mkdir -p /root/openclaw/.openclaw/workspace
     
-    # Check and fix openclaw.json
-    local config_file="/root/openclaw/.openclaw/openclaw.json"
-    
-    if [ -f "$config_file" ]; then
-        log_info "Verificando configuração existente em $config_file..."
-        # Backup before edit
-        cp "$config_file" "${config_file}.bak"
-        
-        # Remove invalid 'llm' keys if present
-        if grep -q '"llm"' "$config_file"; then
-             log_warn "Detectada configuração 'llm' obsoleta. Removendo para evitar crash..."
-             # Use jq to safely remove keys
-             local tmp=$(mktemp)
-             jq 'del(.agents.defaults.llm) | del(.llm)' "$config_file" > "$tmp" && mv "$tmp" "$config_file"
-             rm -f "$tmp"
-             log_success "Configuração corrigida."
-        fi
-    else
-        # Tenta copiar defaults se existir no diretório atual
-        if [ -f "openclaw.defaults.json" ]; then
-             log_info "Copiando configuração padrão para $config_file..."
-             cp "openclaw.defaults.json" "$config_file"
-        fi
-    fi
-    
-    # --- PROACTIVE FIX: Ensure Token exists to prevent Crash Loop ---
-    # The container crashes immediately if auth type is token but no token is set.
-    # We must inject it BEFORE starting the container.
-    
-    if [ -f "$config_file" ]; then
-        # Check tokens
-        local auth_token=$(jq -r '.gateway.auth.token // empty' "$config_file" 2>/dev/null)
-        local remote_token=$(jq -r '.gateway.remote.token // empty' "$config_file" 2>/dev/null)
-        local final_token=""
-        
-        # NOTE: Removed proactive token injection/generation as requested.
-        # The user must use the 'openclaw onboard' wizard to configure the gateway properly.
-        # This prevents the script from creating conflicting or incomplete configurations.
-        
-        # If token exists, we just display it for convenience
-        if [ -n "$auth_token" ]; then
-             final_token="$auth_token"
-        fi
-
-        # Save/Update info file if we have a token
-        if [ -n "$final_token" ]; then
-            mkdir -p /root/dados_vps
-            echo "================================================================" > /root/dados_vps/openclaw.txt
-            echo " DATA DE INSTALAÇÃO: $(date)" >> /root/dados_vps/openclaw.txt
-            echo "================================================================" >> /root/dados_vps/openclaw.txt
-            echo " TOKEN DE ACESSO (GATEWAY):" >> /root/dados_vps/openclaw.txt
-            echo " $final_token" >> /root/dados_vps/openclaw.txt
-            echo "----------------------------------------------------------------" >> /root/dados_vps/openclaw.txt
-            
-            # Get IP
-            local public_ip="LOCALHOST"
-            if command -v curl &> /dev/null; then
-                public_ip=$(curl -s --connect-timeout 3 ifconfig.me || echo "LOCALHOST")
-            fi
-            
-            echo " LINK DIRETO DO DASHBOARD:" >> /root/dados_vps/openclaw.txt
-            echo " http://$public_ip:18789/?token=$final_token" >> /root/dados_vps/openclaw.txt
-            echo "================================================================" >> /root/dados_vps/openclaw.txt
-            chmod 600 /root/dados_vps/openclaw.txt
-        fi
-    fi
-
     # Ajusta permissões para o usuário do container (UID 1000)
     # Isso evita erros de EACCES/Permission Denied
     chown -R 1000:1000 /root/openclaw
@@ -327,7 +260,7 @@ EOF
 }
 
 setup_security_config() {
-    log_info "Verificando e aplicando configurações de segurança..."
+    log_info "Verificando configuração de segurança..."
     
     # Aguarda o container subir (tentativa simples)
     sleep 5
@@ -335,104 +268,58 @@ setup_security_config() {
     local container_id=$(docker ps --filter "name=openclaw" --format "{{.ID}}" | head -n 1)
     
     if [ -z "$container_id" ]; then
-        log_error "Container não encontrado. Configuração automática de segurança ignorada."
+        log_error "Container não encontrado. Não foi possível ler a configuração."
         return
     fi
 
-    # Tenta copiar config atual (se existir)
-    # Se falhar (arquivo não existe), cria um JSON vazio
-    docker cp "$container_id":/home/openclaw/.openclaw/openclaw.json ./current_config.json 2>/dev/null || echo "{}" > ./current_config.json
-
-    # Fix self-healing: Remove invalid key 'gateway.auth.type' if present (bug fix)
-    local CONFIG_CHANGED=false
-    if jq -e '.gateway.auth.type' ./current_config.json >/dev/null 2>&1; then
-        log_info "Corrigindo configuração antiga (removendo gateway.auth.type inválido)..."
-        jq 'del(.gateway.auth.type)' ./current_config.json > ./fixed_config.json && mv ./fixed_config.json ./current_config.json
-        CONFIG_CHANGED=true
+    # Ler configuração atual diretamente do container
+    # Usamos cat para ler sem copiar o arquivo para o host
+    local config_content=$(docker exec "$container_id" cat /home/openclaw/.openclaw/openclaw.json 2>/dev/null)
+    
+    if [ -z "$config_content" ]; then
+         log_warn "Arquivo de configuração não encontrado ou vazio dentro do container."
+         return
     fi
 
-    # Verificar se já tem gateway.auth.token configurado
-    local HAS_TOKEN=$(jq -r '.gateway.auth.token // empty' ./current_config.json 2>/dev/null)
+    # Verificar se tem token configurado pelo Wizard
+    local auth_token=$(echo "$config_content" | jq -r '.gateway.auth.token // empty')
     
-    if [ -n "$HAS_TOKEN" ]; then
-        if [ "$CONFIG_CHANGED" = true ]; then
-            log_info "Aplicando correções na configuração existente..."
-            docker cp ./current_config.json "$container_id":/home/openclaw/.openclaw/openclaw.json
-            docker exec -u root "$container_id" chown openclaw:openclaw /home/openclaw/.openclaw/openclaw.json
-            log_info "Reiniciando container para aplicar correções..."
-            docker restart "$container_id"
-            log_success "Configuração corrigida com sucesso."
-        else
-            log_info "Configuração de segurança já existente e correta."
+    if [ -n "$auth_token" ]; then
+        log_info "Token de segurança detectado."
+        
+        # Detectar IP Externo para facilitar o acesso
+        local PUBLIC_IP="LOCALHOST"
+        if command -v curl &> /dev/null; then
+            PUBLIC_IP=$(curl -s --connect-timeout 3 ifconfig.me || echo "LOCALHOST")
         fi
-        rm -f ./current_config.json
-        return
-    fi
+        
+        # Salvar info para o usuário (apenas leitura/display)
+        mkdir -p /root/dados_vps
+        echo "================================================================" > /root/dados_vps/openclaw.txt
+        echo " DATA DE INSTALAÇÃO: $(date)" >> /root/dados_vps/openclaw.txt
+        echo "================================================================" >> /root/dados_vps/openclaw.txt
+        echo " TOKEN DE ACESSO (GATEWAY):" >> /root/dados_vps/openclaw.txt
+        echo " $auth_token" >> /root/dados_vps/openclaw.txt
+        echo "----------------------------------------------------------------" >> /root/dados_vps/openclaw.txt
+        echo " LINK DIRETO DO DASHBOARD:" >> /root/dados_vps/openclaw.txt
+        echo " http://$PUBLIC_IP:18789/?token=$auth_token" >> /root/dados_vps/openclaw.txt
+        echo "================================================================" >> /root/dados_vps/openclaw.txt
+        chmod 600 /root/dados_vps/openclaw.txt
 
-    log_info "Gerando Token de Segurança e configurando Trusted Proxies..."
-
-    # Gerar Token
-    local NEW_TOKEN=""
-    if command -v openssl &> /dev/null; then
-        NEW_TOKEN=$(openssl rand -hex 32)
+        echo ""
+        echo -e "${AZUL}================================================================${RESET}"
+        echo -e "${VERDE} TOKEN DE ACESSO (GATEWAY):${RESET}"
+        echo -e "${BRANCO} $auth_token ${RESET}"
+        echo -e "${AZUL}================================================================${RESET}"
+        echo -e "Uma cópia foi salva em: ${VERDE}/root/dados_vps/openclaw.txt${RESET}"
+        echo ""
     else
-        NEW_TOKEN=$(date +%s%N | sha256sum | head -c 64)
+        log_info "Nenhum token detectado na configuração atual."
+        echo ""
+        echo -e "${AMARELO}NOTA: O OpenClaw ainda não está configurado com um token de acesso.${RESET}"
+        echo -e "${BRANCO}Utilize o 'Setup Wizard' (Opção 4) para gerar a configuração inicial.${RESET}"
+        echo ""
     fi
-
-    # Merge/Criação com jq
-    # Adiciona auth token e trusted proxies (essencial para evitar erros de loopback_no_auth)
-    jq --arg token "$NEW_TOKEN" '
-        .gateway.auth.token = $token |
-        .gateway.trustedProxies = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.1"]
-    ' ./current_config.json > ./new_config.json
-    
-    # Copiar de volta para o container
-    docker cp ./new_config.json "$container_id":/home/openclaw/.openclaw/openclaw.json
-    
-    # Ajustar permissões (Root executa chown)
-    docker exec -u root "$container_id" chown openclaw:openclaw /home/openclaw/.openclaw/openclaw.json
-    docker exec -u root "$container_id" chmod 600 /home/openclaw/.openclaw/openclaw.json
-    
-    # Reiniciar para aplicar
-    log_info "Reiniciando container para carregar novas configurações..."
-    docker restart "$container_id"
-    
-    # Salvar token em arquivo seguro
-    mkdir -p /root/dados_vps
-    
-    # Detectar IP Externo para facilitar o acesso
-    local PUBLIC_IP="LOCALHOST"
-    if command -v curl &> /dev/null; then
-        PUBLIC_IP=$(curl -s --connect-timeout 3 ifconfig.me || echo "LOCALHOST")
-    fi
-    
-    echo "================================================================" > /root/dados_vps/openclaw.txt
-    echo " DATA DE INSTALAÇÃO: $(date)" >> /root/dados_vps/openclaw.txt
-    echo "================================================================" >> /root/dados_vps/openclaw.txt
-    echo " TOKEN DE ACESSO (GATEWAY):" >> /root/dados_vps/openclaw.txt
-    echo " $NEW_TOKEN" >> /root/dados_vps/openclaw.txt
-    echo "----------------------------------------------------------------" >> /root/dados_vps/openclaw.txt
-    echo " LINK DIRETO DO DASHBOARD:" >> /root/dados_vps/openclaw.txt
-    echo " http://$PUBLIC_IP:18789/?token=$NEW_TOKEN" >> /root/dados_vps/openclaw.txt
-    echo "----------------------------------------------------------------" >> /root/dados_vps/openclaw.txt
-    echo " NOTA IMPORTANTE (PRIMEIRO ACESSO):" >> /root/dados_vps/openclaw.txt
-    echo " Ao acessar por IP externo, o sistema pode pedir aprovação (Pairing)." >> /root/dados_vps/openclaw.txt
-    echo " Se vir 'Pairing Required', rode no terminal:" >> /root/dados_vps/openclaw.txt
-    echo "   openclaw devices list      (para ver o ID)" >> /root/dados_vps/openclaw.txt
-    echo "   openclaw devices approve <ID> (para liberar)" >> /root/dados_vps/openclaw.txt
-    echo "================================================================" >> /root/dados_vps/openclaw.txt
-    chmod 600 /root/dados_vps/openclaw.txt
-
-    log_success "Segurança configurada com sucesso!"
-    echo ""
-    echo -e "${AZUL}================================================================${RESET}"
-    echo -e "${VERDE} TOKEN DE ACESSO GERADO (GATEWAY):${RESET}"
-    echo -e "${BRANCO} $NEW_TOKEN ${RESET}"
-    echo -e "${AZUL}================================================================${RESET}"
-    echo -e "Guarde este token. Uma cópia foi salva em: ${VERDE}/root/dados_vps/openclaw.txt${RESET}"
-    echo ""
-    
-    rm -f ./current_config.json ./new_config.json
 }
 
 sync_official_skills() {
