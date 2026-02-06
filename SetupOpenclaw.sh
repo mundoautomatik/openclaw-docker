@@ -1307,10 +1307,15 @@ setup_openclaw() {
              install_initial_skills
              
              echo ""
-             echo -e "${BRANCO}Iniciando Wizard de Configuração...${RESET}"
-             sleep 2
-             setup_sandbox
-             run_wizard
+             echo -en "${BRANCO}Deseja iniciar o Wizard de Configuração (Onboard) agora? [Y/n]: ${RESET}"
+             read -r RUN_WIZARD
+             
+             if [[ "$RUN_WIZARD" =~ ^[Yy]$ || -z "$RUN_WIZARD" ]]; then
+                 setup_sandbox
+                 run_wizard
+             else
+                 log_info "Wizard pulado. Você pode executá-lo manualmente depois pela Opção 4."
+             fi
         else
              log_error "Falha ao iniciar o serviço OpenClaw. Abortando Wizard."
         fi
@@ -1351,10 +1356,15 @@ setup_openclaw() {
             install_initial_skills
             
             echo ""
-            echo -e "${BRANCO}Iniciando Wizard de Configuração...${RESET}"
-            sleep 2
-            setup_sandbox
-            run_wizard
+            echo -en "${BRANCO}Deseja iniciar o Wizard de Configuração (Onboard) agora? [Y/n]: ${RESET}"
+            read -r RUN_WIZARD_SA
+            
+            if [[ "$RUN_WIZARD_SA" =~ ^[Yy]$ || -z "$RUN_WIZARD_SA" ]]; then
+                setup_sandbox
+                run_wizard
+            else
+                log_info "Wizard pulado. Você pode executá-lo manualmente depois pela Opção 4."
+            fi
         else
             log_error "Falha ao iniciar containers Standalone."
             docker compose logs --tail 20
