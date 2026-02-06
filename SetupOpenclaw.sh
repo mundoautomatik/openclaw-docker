@@ -56,6 +56,10 @@ log_warning() {
     log "WARNING: $1"
 }
 
+log_warn() {
+    log_warning "$1"
+}
+
 # --- Verificações ---
 
 check_root() {
@@ -139,34 +143,47 @@ prepare_persistence() {
     # We must inject it BEFORE starting the container.
     
     if [ -f "$config_file" ]; then
-        # Check if token exists
-        local has_token=$(jq -r '.gateway.auth.token // empty' "$config_file" 2>/dev/null)
+        # Check tokens
+        local auth_token=$(jq -r '.gateway.auth.token // empty' "$config_file" 2>/dev/null)
+        local remote_token=$(jq -r '.gateway.remote.token // empty' "$config_file" 2>/dev/null)
+        local final_token=""
         
-        if [ -z "$has_token" ]; then
+        if [ -z "$auth_token" ]; then
             log_info "Token de autenticação ausente. Gerando um novo para evitar crash loop..."
             
             # Generate Token
-            local new_token=""
             if command -v openssl &> /dev/null; then
-                new_token=$(openssl rand -hex 32)
+                final_token=$(openssl rand -hex 32)
             else
-                new_token=$(date +%s%N | sha256sum | head -c 64)
+                final_token=$(date +%s%N | sha256sum | head -c 64)
             fi
             
-            # Inject Token and Trusted Proxies using jq
+            # Inject Token (Auth & Remote) and Trusted Proxies using jq
             local tmp_conf=$(mktemp)
-            jq --arg token "$new_token" '
+            jq --arg token "$final_token" '
                 .gateway.auth.token = $token |
+                .gateway.remote.token = $token |
                 .gateway.trustedProxies = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.1"]
             ' "$config_file" > "$tmp_conf" && mv "$tmp_conf" "$config_file"
             
-            # Save to info file
+            log_success "Token gerado e injetado com sucesso: $final_token"
+            
+        elif [ "$auth_token" != "$remote_token" ]; then
+             log_info "Sincronizando token do cliente CLI (gateway.remote.token)..."
+             local tmp_conf=$(mktemp)
+             jq --arg token "$auth_token" '.gateway.remote.token = $token' "$config_file" > "$tmp_conf" && mv "$tmp_conf" "$config_file"
+             log_success "Token do cliente CLI sincronizado."
+             final_token="$auth_token"
+        fi
+        
+        # Save/Update info file if we have a token (either new or synced)
+        if [ -n "$final_token" ]; then
             mkdir -p /root/dados_vps
             echo "================================================================" > /root/dados_vps/openclaw.txt
             echo " DATA DE INSTALAÇÃO: $(date)" >> /root/dados_vps/openclaw.txt
             echo "================================================================" >> /root/dados_vps/openclaw.txt
             echo " TOKEN DE ACESSO (GATEWAY):" >> /root/dados_vps/openclaw.txt
-            echo " $new_token" >> /root/dados_vps/openclaw.txt
+            echo " $final_token" >> /root/dados_vps/openclaw.txt
             echo "----------------------------------------------------------------" >> /root/dados_vps/openclaw.txt
             
             # Get IP
@@ -176,11 +193,9 @@ prepare_persistence() {
             fi
             
             echo " LINK DIRETO DO DASHBOARD:" >> /root/dados_vps/openclaw.txt
-            echo " http://$public_ip:18789/?token=$new_token" >> /root/dados_vps/openclaw.txt
+            echo " http://$public_ip:18789/?token=$final_token" >> /root/dados_vps/openclaw.txt
             echo "================================================================" >> /root/dados_vps/openclaw.txt
             chmod 600 /root/dados_vps/openclaw.txt
-            
-            log_success "Token gerado e injetado com sucesso: $new_token"
         fi
     fi
 
@@ -1367,6 +1382,20 @@ approve_device() {
 
     if [ -n "$container_id" ]; then
         log_info "Container encontrado: $container_id"
+        
+        # FIX: Ensure CLI has the token (sync auth.token to remote.token)
+        local config_file="/root/openclaw/.openclaw/openclaw.json"
+        if [ -f "$config_file" ]; then
+             local auth_token=$(jq -r '.gateway.auth.token // empty' "$config_file" 2>/dev/null)
+             local remote_token=$(jq -r '.gateway.remote.token // empty' "$config_file" 2>/dev/null)
+             
+             if [ -n "$auth_token" ] && [ "$auth_token" != "$remote_token" ]; then
+                 log_info "Sincronizando token do cliente CLI para permitir comandos locais..."
+                 local tmp_conf=$(mktemp)
+                 jq --arg token "$auth_token" '.gateway.remote.token = $token' "$config_file" > "$tmp_conf" && mv "$tmp_conf" "$config_file"
+             fi
+        fi
+
         log_info "Listando requisições de pareamento pendentes..."
         echo ""
         echo -e "${AMARELO}--- Requisições Pendentes ---${RESET}"
