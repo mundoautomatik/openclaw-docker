@@ -714,8 +714,8 @@ install_full_stack_swarm() {
                 log_info "Usando IP detectado: $ADVERTISE_ADDR"
                 docker swarm init --advertise-addr "$ADVERTISE_ADDR" || log_error "Falha crítica ao iniciar Swarm."
             else
-                log_error "Não foi possível detectar IP. O Swarm não pôde ser iniciado."
-                log_error "Tente rodar manualmente: docker swarm init --advertise-addr <SEU_IP>"
+                log_error "Não foi possível detectar IP. Tentando iniciar Swarm sem advertise-addr explícito..."
+                docker swarm init || log_error "Falha crítica ao iniciar Swarm. Tente rodar manualmente: docker swarm init --advertise-addr <SEU_IP>"
             fi
         fi
     fi
