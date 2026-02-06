@@ -148,49 +148,16 @@ prepare_persistence() {
         local remote_token=$(jq -r '.gateway.remote.token // empty' "$config_file" 2>/dev/null)
         local final_token=""
         
-        if [ -z "$auth_token" ]; then
-            log_info "Token de autenticação ausente. Gerando um novo para evitar crash loop..."
-            
-            # Generate Token
-            if command -v openssl &> /dev/null; then
-                final_token=$(openssl rand -hex 32)
-            else
-                final_token=$(date +%s%N | sha256sum | head -c 64)
-            fi
-            
-            # Inject Token (Auth & Remote) and Trusted Proxies using jq
-            local tmp_conf=$(mktemp)
-            jq --arg token "$final_token" '
-                .gateway.auth.token = $token |
-                .gateway.remote.token = $token |
-                .gateway.trustedProxies = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.1"]
-            ' "$config_file" > "$tmp_conf" && mv "$tmp_conf" "$config_file"
-            
-            log_success "Token gerado e injetado com sucesso: $final_token"
-            
-        elif [ "$auth_token" != "$remote_token" ]; then
-             log_info "Sincronizando token do cliente CLI (gateway.remote.token)..."
-             local tmp_conf=$(mktemp)
-             jq --arg token "$auth_token" '.gateway.remote.token = $token' "$config_file" > "$tmp_conf" && mv "$tmp_conf" "$config_file"
-             log_success "Token do cliente CLI sincronizado."
-             final_token="$auth_token"
-        else
-             # Token exists and matches, but we still need to ensure host binding is 0.0.0.0
+        # NOTE: Removed proactive token injection/generation as requested.
+        # The user must use the 'openclaw onboard' wizard to configure the gateway properly.
+        # This prevents the script from creating conflicting or incomplete configurations.
+        
+        # If token exists, we just display it for convenience
+        if [ -n "$auth_token" ]; then
              final_token="$auth_token"
         fi
-        
-        # FIX: Force Host Binding to 0.0.0.0 to allow Traefik/External access
-        # Also ensure remote.token matches auth.token (redundant but safe)
-        if [ -n "$final_token" ]; then
-            local current_host=$(jq -r '.gateway.host // empty' "$config_file" 2>/dev/null)
-            if [ "$current_host" != "0.0.0.0" ]; then
-                log_info "Forçando gateway.host = 0.0.0.0 para permitir acesso externo/Traefik..."
-                local tmp_conf=$(mktemp)
-                jq '.gateway.host = "0.0.0.0"' "$config_file" > "$tmp_conf" && mv "$tmp_conf" "$config_file"
-            fi
-        fi
-        
-        # Save/Update info file if we have a token (either new or synced)
+
+        # Save/Update info file if we have a token
         if [ -n "$final_token" ]; then
             mkdir -p /root/dados_vps
             echo "================================================================" > /root/dados_vps/openclaw.txt
@@ -1103,6 +1070,10 @@ setup_openclaw() {
                 # Recupera token para exibir link final
                 local final_token=$(grep -A 1 "TOKEN DE ACESSO" /root/dados_vps/openclaw.txt | tail -n 1 | tr -d ' ')
                 echo -e "Acesse em: ${VERDE}https://$DOMAIN/?token=$final_token${RESET}"
+                
+                echo ""
+                echo -e "${AMARELO}IMPORTANTE: Para concluir a instalação, execute a opção '4 - Setup Wizard' no menu principal.${RESET}"
+                echo ""
             else
                 log_error "Falha no deploy Swarm."
             fi
@@ -1129,6 +1100,9 @@ setup_openclaw() {
         echo -e "  - Ver logs: ${VERDE}docker compose logs -f${RESET}"
         echo -e "  - Adicionar Skill: ${VERDE}./add_skill.sh <url_git>${RESET}"
         echo -e "  - Scan Manual: ${VERDE}docker compose exec openclaw /usr/local/bin/scan_skills.sh${RESET}"
+        echo ""
+        echo -e "${AMARELO}IMPORTANTE: Para concluir a instalação, execute a opção '4 - Setup Wizard' no menu principal.${RESET}"
+        echo ""
     else
         log_error "Falha ao iniciar o OpenClaw."
     fi
