@@ -212,6 +212,14 @@ setup_hostname() {
 
 install_portainer_standalone() {
     log_info "Instalando Portainer Standalone..."
+    
+    echo -en "${BRANCO}Usuário Admin do Portainer (ex: admin): ${RESET}"
+    read -r PORTAINER_USER
+    [ -z "$PORTAINER_USER" ] && PORTAINER_USER="admin"
+    
+    echo -en "${BRANCO}Senha do Portainer (min 12 chars): ${RESET}"
+    read -r PORTAINER_PASS
+
     docker run -d -p 9000:9000 -p 9443:9443 --name portainer \
         --restart=always \
         -v /var/run/docker.sock:/var/run/docker.sock \
@@ -219,13 +227,50 @@ install_portainer_standalone() {
         portainer/portainer-ce:latest
         
     if [ $? -eq 0 ]; then
-        log_success "Portainer instalado com sucesso!"
+        log_success "Container do Portainer iniciado."
         local ip_addr=$(hostname -I | awk '{print $1}')
-        echo -e "${AMARELO}Acesse: https://$ip_addr:9443${RESET}"
+        echo -e "${AMARELO}Aguardando inicialização do Portainer em https://$ip_addr:9443 ...${RESET}"
         
-        # Salvar info em dados_vps
-        echo "Portainer URL: https://$ip_addr:9443" > /root/dados_vps/dados_portainer.txt
-        echo "Portainer Installed: $(date)" >> /root/dados_vps/dados_portainer.txt
+        # Aguarda Portainer responder
+        sleep 10
+        local MAX_RETRIES=10
+        local READY=false
+        for i in $(seq 1 $MAX_RETRIES); do
+             if curl -k -s -I "https://localhost:9443" >/dev/null 2>&1; then
+                 READY=true
+                 break
+             fi
+             sleep 5
+        done
+        
+        if [ "$READY" = true ]; then
+             log_info "Configurando usuário admin do Portainer..."
+             # Cria Admin
+             local RESPONSE=$(curl -k -s -X POST "https://localhost:9443/api/users/admin/init" \
+                -H "Content-Type: application/json" \
+                -d "{\"Username\": \"$PORTAINER_USER\", \"Password\": \"$PORTAINER_PASS\"}")
+             
+             if echo "$RESPONSE" | grep -q "\"Username\":\"$PORTAINER_USER\"" || echo "$RESPONSE" | grep -q "Users already exists"; then
+                  log_success "Admin Portainer configurado."
+                  
+                  # Gera Token
+                  local TOKEN=$(curl -k -s -X POST "https://localhost:9443/api/auth" \
+                    -H "Content-Type: application/json" \
+                    -d "{\"username\":\"$PORTAINER_USER\",\"password\":\"$PORTAINER_PASS\"}" | jq -r .jwt)
+                  
+                  # Salva credenciais
+                  echo "Portainer URL: https://$ip_addr:9443" > /root/dados_vps/dados_portainer.txt
+                  echo "User: $PORTAINER_USER" >> /root/dados_vps/dados_portainer.txt
+                  echo "Pass: $PORTAINER_PASS" >> /root/dados_vps/dados_portainer.txt
+                  echo "Token: $TOKEN" >> /root/dados_vps/dados_portainer.txt
+                  log_success "Credenciais salvas em /root/dados_vps/dados_portainer.txt"
+             else
+                  log_error "Falha ao criar admin: $RESPONSE"
+             fi
+        else
+             log_warn "Portainer demorou para responder. Configure o admin manualmente."
+        fi
+        
     else
         log_error "Falha ao instalar Portainer."
     fi
@@ -721,6 +766,12 @@ deploy_stack_via_api() {
     local stack_name="$1"
     local compose_file="$2"
     
+    # Detecta modo (Swarm ou Standalone)
+    local is_swarm=false
+    if [ "$(docker info --format '{{.Swarm.LocalNodeState}}')" == "active" ]; then
+        is_swarm=true
+    fi
+    
     # Tenta recuperar credenciais/configuração do Portainer se não estiverem no escopo
     local p_domain="$PORTAINER_DOMAIN"
     local p_user="$PORTAINER_USER"
@@ -748,10 +799,19 @@ deploy_stack_via_api() {
         fi
     fi
     
-    # Se não temos domínio, não dá pra usar API
+    # Se não temos domínio, tenta localhost para standalone
+    if [ -z "$p_domain" ] && [ "$is_swarm" = false ]; then
+        p_domain="localhost:9443"
+    fi
+    
+    # Se ainda não temos domínio, falha
     if [ -z "$p_domain" ]; then
         log_info "Domínio do Portainer não identificado. Usando deploy via CLI."
-        docker stack deploy --prune --resolve-image always -c "$compose_file" "$stack_name"
+        if [ "$is_swarm" = true ]; then
+            docker stack deploy --prune --resolve-image always -c "$compose_file" "$stack_name"
+        else
+            docker compose -f "$compose_file" up -d
+        fi
         return
     fi
     
@@ -767,7 +827,11 @@ deploy_stack_via_api() {
 
     if [ -z "$token" ] || [ "$token" == "null" ]; then
         log_warn "Não foi possível autenticar na API do Portainer. Usando deploy via CLI."
-        docker stack deploy --prune --resolve-image always -c "$compose_file" "$stack_name"
+        if [ "$is_swarm" = true ]; then
+            docker stack deploy --prune --resolve-image always -c "$compose_file" "$stack_name"
+        else
+            docker compose -f "$compose_file" up -d
+        fi
         return
     fi
 
@@ -776,19 +840,21 @@ deploy_stack_via_api() {
     
     if [ -z "$endpoint_id" ] || [ "$endpoint_id" == "null" ]; then
          log_warn "Falha ao obter Endpoint ID. Usando deploy via CLI."
-         docker stack deploy --prune --resolve-image always -c "$compose_file" "$stack_name"
+         if [ "$is_swarm" = true ]; then
+             docker stack deploy --prune --resolve-image always -c "$compose_file" "$stack_name"
+         else
+             docker compose -f "$compose_file" up -d
+         fi
          return
     fi
-    
-    # Obter Swarm ID
-    local swarm_id=$(curl -k -s -H "Authorization: Bearer $token" --resolve "$p_domain:443:127.0.0.1" "$portainer_url/api/endpoints/$endpoint_id/docker/swarm" | jq -r .ID)
-
-    log_info "Tentando deploy via Portainer API (Stack: $stack_name, Endpoint: $endpoint_id)..."
     
     # Arquivos temporários para capturar saída
     local response_output=$(mktemp)
     local error_output=$(mktemp)
+    local file_content=$(cat "$compose_file")
     
+    log_info "Tentando deploy via Portainer API (Stack: $stack_name, Endpoint: $endpoint_id, Mode: $(if $is_swarm; then echo Swarm; else echo Standalone; fi))..."
+
     # Verificar se a stack já existe
     local stack_id=$(curl -k -s -H "Authorization: Bearer $token" --resolve "$p_domain:443:127.0.0.1" "$portainer_url/api/stacks" | jq -r --arg name "$stack_name" '.[] | select(.Name == $name) | .Id')
 
@@ -796,10 +862,11 @@ deploy_stack_via_api() {
          log_info "Stack '$stack_name' encontrada (ID: $stack_id). Atualizando via API..."
          
          # Preparar payload JSON seguro usando jq
-         local file_content=$(cat "$compose_file")
          local payload=$(jq -n --arg content "$file_content" --argjson prune true '{StackFileContent: $content, Prune: $prune}')
          
-         # API Request para ATUALIZAR stack
+         # Se Standalone, payload é diferente (EnvVars, etc) - mas para update simples pode ser similar
+         # Na API v2, update de standalone stack usa PUT /stacks/{id}?endpointId={id}
+         
          local http_code=$(curl -s -o "$response_output" -w "%{http_code}" -k -X PUT \
             -H "Authorization: Bearer $token" \
             -H "Content-Type: application/json" \
@@ -813,31 +880,72 @@ deploy_stack_via_api() {
             log_error "Erro ao atualizar stack via API (HTTP $http_code)."
             log_error "Resposta: $(cat $response_output)"
             log_info "Tentando fallback via CLI..."
-            docker stack deploy --prune --resolve-image always -c "$compose_file" "$stack_name"
+            if [ "$is_swarm" = true ]; then
+                docker stack deploy --prune --resolve-image always -c "$compose_file" "$stack_name"
+            else
+                docker compose -f "$compose_file" up -d
+            fi
          fi
     else
         # API Request para CRIAR stack
-        local http_code=$(curl -s -o "$response_output" -w "%{http_code}" -k -X POST \
-        -H "Authorization: Bearer $token" \
-        --resolve "$p_domain:443:127.0.0.1" \
-        -F "Name=$stack_name" \
-        -F "file=@$(pwd)/$compose_file" \
-        -F "SwarmID=$swarm_id" \
-        -F "endpointId=$endpoint_id" \
-        "$portainer_url/api/stacks/create/swarm/file" 2> "$error_output")
+        local http_code=0
+        
+        if [ "$is_swarm" = true ]; then
+            # SWARM DEPLOY
+            # Obter Swarm ID
+            local swarm_id=$(curl -k -s -H "Authorization: Bearer $token" --resolve "$p_domain:443:127.0.0.1" "$portainer_url/api/endpoints/$endpoint_id/docker/swarm" | jq -r .ID)
+            
+            http_code=$(curl -s -o "$response_output" -w "%{http_code}" -k -X POST \
+            -H "Authorization: Bearer $token" \
+            --resolve "$p_domain:443:127.0.0.1" \
+            -F "Name=$stack_name" \
+            -F "file=@$(pwd)/$compose_file" \
+            -F "SwarmID=$swarm_id" \
+            -F "endpointId=$endpoint_id" \
+            "$portainer_url/api/stacks/create/swarm/file" 2> "$error_output")
+        else
+            # STANDALONE DEPLOY (Docker Compose)
+            # API: POST /api/stacks/create/standalone/file
+            # Form-Data: Name, file, endpointId, Env (json string)
+            
+            # Preparar variáveis de ambiente para injetar (Standlone precisa explícito)
+            # OPENCLAW_CONFIG_PATH, TZ, NODE_ENV
+            local env_json="[
+                {\"name\": \"OPENCLAW_CONFIG_PATH\", \"value\": \"/root/openclaw/.openclaw\"},
+                {\"name\": \"TZ\", \"value\": \"America/Sao_Paulo\"},
+                {\"name\": \"NODE_ENV\", \"value\": \"production\"}
+            ]"
+            
+            http_code=$(curl -s -o "$response_output" -w "%{http_code}" -k -X POST \
+            -H "Authorization: Bearer $token" \
+            --resolve "$p_domain:443:127.0.0.1" \
+            -F "Name=$stack_name" \
+            -F "file=@$(pwd)/$compose_file" \
+            -F "endpointId=$endpoint_id" \
+            -F "Env=$env_json" \
+            "$portainer_url/api/stacks/create/standalone/file" 2> "$error_output")
+        fi
         
         if [ "$http_code" -eq 200 ]; then
             log_success "Deploy da stack '$stack_name' realizado com SUCESSO via Portainer API!"
             log_info "A stack agora deve aparecer como 'Total Control' no Portainer."
         elif [ "$http_code" -eq 409 ]; then
             log_warn "Stack '$stack_name' já existe no Portainer (Conflito detectado tardiamente). Atualizando via CLI..."
-            docker stack deploy --prune --resolve-image always -c "$compose_file" "$stack_name"
+            if [ "$is_swarm" = true ]; then
+                docker stack deploy --prune --resolve-image always -c "$compose_file" "$stack_name"
+            else
+                docker compose -f "$compose_file" up -d
+            fi
         else
             log_error "Erro no deploy via API (HTTP $http_code)."
             log_error "Resposta: $(cat $response_output)"
             log_error "Detalhes: $(cat $error_output)"
             log_info "Tentando fallback via CLI..."
-            docker stack deploy --prune --resolve-image always -c "$compose_file" "$stack_name"
+            if [ "$is_swarm" = true ]; then
+                docker stack deploy --prune --resolve-image always -c "$compose_file" "$stack_name"
+            else
+                docker compose -f "$compose_file" up -d
+            fi
         fi
     fi
     
@@ -1322,7 +1430,7 @@ setup_openclaw() {
         
     else
         # === DEPLOY STANDALONE ===
-        log_info "Iniciando deploy Standalone (Docker Compose)..."
+        log_info "Iniciando deploy Standalone (Docker Compose via Portainer API)..."
         
         # Configurações de ambiente
         unset OPENCLAW_GATEWAY_TOKEN
@@ -1330,27 +1438,29 @@ setup_openclaw() {
         export TZ="America/Sao_Paulo"
         export NODE_ENV="production"
         
-        docker compose pull
-        docker compose up -d
+        # Tenta deploy via API primeiro para ter controle total no Portainer
+        # A função deploy_stack_via_api detecta se é Swarm ou Standalone baseado no contexto?
+        # Precisamos adaptar deploy_stack_via_api para suportar Standalone (endpoint 1)
         
+        # Gera o docker-compose.yml final com as variáveis substituídas se necessário,
+        # mas como deploy_stack_via_api usa o arquivo, e o arquivo usa env vars do host no compose up,
+        # para API do Portainer precisamos que o arquivo seja "autocontido" ou use env vars da stack.
+        # O docker-compose.yml atual depende de variáveis de ambiente do shell (ex: ${OPENCLAW_CONFIG_PATH}).
+        # O Portainer Standalone API (Stacks) permite definir EnvVars no payload.
+        
+        # Como fallback/simplicidade, vamos tentar usar o deploy_stack_via_api
+        # mas precisamos garantir que ele saiba lidar com Standalone.
+        # Vamos modificar deploy_stack_via_api para detectar o modo.
+        
+        deploy_stack_via_api "openclaw" "docker-compose.yml"
+        
+        # Se o deploy via API falhar, ele faz fallback para CLI (docker stack deploy),
+        # mas docker stack deploy não funciona em Standalone.
+        # O fallback do deploy_stack_via_api precisa ser "docker compose up -d" se for standalone.
+        
+        # Para garantir, vamos verificar se o serviço subiu
         log_info "Aguardando containers ficarem saudáveis..."
-        # Verifica container openclaw-gateway
-        local max_retries=30
-        local count=0
-        local healthy=false
-        
-        while [ $count -lt $max_retries ]; do
-            if docker compose ps | grep "openclaw-gateway" | grep -q "Up"; then
-                healthy=true
-                break
-            fi
-            sleep 2
-            count=$((count+1))
-            echo -n "."
-        done
-        echo ""
-        
-        if [ "$healthy" = true ]; then
+        if check_service_health "openclaw-gateway" 1 300 || docker compose ps | grep "openclaw-gateway" | grep -q "Up"; then
             log_success "OpenClaw iniciado com sucesso!"
             sync_official_skills
             install_initial_skills
