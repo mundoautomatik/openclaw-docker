@@ -43,8 +43,10 @@ header() {
     echo -e "${AZUL}##                                         SETUP OPENCLAW                                      ##${RESET}"
     echo -e "${AZUL}## // ## // ## // ## // ## // ## // ## // ## //## // ## // ## // ## // ## // ## // ## // ## // ##${RESET}"
     echo ""
-    echo -e "                           ${BRANCO}Versão do Instalador: ${VERDE}v2.1.0${RESET}                "
+    echo -e "                           ${BRANCO}Versão do Instalador: ${VERDE}v2.9.0${RESET}                "
     echo -e "${VERDE}     ${BRANCO}<- Desenvolvido por AllTomatos ->     ${VERDE}github.com/alltomatos/openclaw-docker${RESET}"
+    echo -e "         ${AZUL}Agradecimento Especial ao Orion pelo trabalho no Setup Orion${RESET}"
+    echo -e "                   ${BRANCO}Visite: ${VERDE}https://mundoautomatik.com${RESET}"
     echo ""
 }
 
@@ -79,6 +81,26 @@ log_warn() {
 
 # --- Verificações ---
 
+
+# Função para detectar IP Público
+detect_public_ip() {
+    local ip=""
+    # Tenta obter IP de serviços externos
+    ip=$(curl -s --max-time 5 ifconfig.me 2>/dev/null)
+    [ -z "$ip" ] && ip=$(curl -s --max-time 5 icanhazip.com 2>/dev/null)
+    [ -z "$ip" ] && ip=$(curl -s --max-time 5 ifconfig.co 2>/dev/null)
+    
+    # Validação simples de IP
+    if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "$ip"
+    else
+        # Fallback para IP da interface principal (ex: eth0) ou localhost
+        local local_ip=$(hostname -I | cut -d' ' -f1)
+        [ -z "$local_ip" ] && local_ip="127.0.0.1"
+        echo "$local_ip"
+    fi
+}
+
 check_root() {
     if [ "$EUID" -ne 0 ]; then
         log_error "Este script precisa ser executado como root (sudo)."
@@ -99,6 +121,24 @@ ensure_docker_permission() {
     if [ -n "$DOCKER_GID" ]; then
         # Exporta GID para ser usado no build/run se necessário
         export DOCKER_GID_HOST=$DOCKER_GID
+    fi
+}
+
+fix_permissions() {
+    log_info "Verificando e corrigindo permissões do diretório de dados..."
+    # Garante que o diretório pertença ao usuário openclaw (UID 994 ou 1000 dependendo da imagem, mas geralmente 994 no Dockerfile oficial)
+    # Por segurança, aplicamos permissões restritivas
+    
+    if [ -d "/root/openclaw" ]; then
+        # 700 para diretórios (apenas dono pode ler/entrar)
+        chmod 700 /root/openclaw
+        
+        if [ -d "/root/openclaw/credentials" ]; then
+             chmod 700 /root/openclaw/credentials
+        fi
+        
+        # Se possível, ajustar ownership para o user do container (se soubermos o UID)
+        # docker run --rm -v /root/openclaw:/data alpine chown -R 994:994 /data 2>/dev/null || true
     fi
 }
 
@@ -1168,6 +1208,15 @@ setup_openclaw() {
         return
     fi
     
+    # Captura Subnet do Traefik para trustedProxies
+    log_info "Detectando Subnet da rede $TRAEFIK_NET para Trusted Proxies..."
+    local TRAEFIK_SUBNET=$(docker network inspect "$TRAEFIK_NET" --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}' | head -n 1)
+    if [ -n "$TRAEFIK_SUBNET" ]; then
+        log_success "Subnet detectada: $TRAEFIK_SUBNET"
+    else
+        log_warn "Não foi possível detectar a subnet. Usando apenas padrões."
+    fi
+    
     echo -en "${BRANCO}Digite o domínio para o OpenClaw (ex: openclaw.watink.com.br): ${RESET}"
     read -r DOMAIN
     [ -z "$DOMAIN" ] && DOMAIN="openclaw.watink.com.br"
@@ -1201,6 +1250,18 @@ setup_openclaw() {
         
         echo -en "${BRANCO}Senha: ${RESET}"
         read -rs AUTH_PASS
+        echo ""
+        
+        log_info "Aguarde alguns instantes para o serviço iniciar e o Traefik rotear o tráfego."
+        
+        # Correção de permissões pós-deploy
+        fix_permissions
+
+        echo ""
+        echo -e "${AMARELO}Deploy concluído!${RESET}"
+        echo -e "${BRANCO}Próximos passos:${RESET}"
+        echo -e "1. Execute a opção ${VERDE}3 - Wizard de Configuração${RESET} no menu principal."
+        echo -e "2. Ou acesse o terminal (Opção 5) e execute ${VERDE}openclaw onboard${RESET}."
         echo ""
         
         log_info "Gerando hash de senha..."
@@ -1254,11 +1315,17 @@ setup_openclaw() {
         # Backup preventivo
         cp "$json_file" "${json_file}.bak"
         
-        # Atualiza bind para 'lan' e configura trustedProxies para Traefik
+        # Atualiza bind para 'lan' e configura trustedProxies para Traefik + Subnet detectada
         local tmp_json=$(mktemp)
-        if jq --arg bind "lan" \
-           '.gateway.bind = $bind | .gateway.trustedProxies = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]' \
-           "$json_file" > "$tmp_json"; then
+        
+        # Constrói array de trusted proxies incluindo a subnet do Traefik se existir
+        local jq_filter='.gateway.bind = $bind | .gateway.trustedProxies = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]'
+        
+        if [ -n "$TRAEFIK_SUBNET" ]; then
+            jq_filter='.gateway.bind = $bind | .gateway.trustedProxies = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", $subnet]'
+        fi
+
+        if jq --arg bind "lan" --arg subnet "$TRAEFIK_SUBNET" "$jq_filter" "$json_file" > "$tmp_json"; then
            
            mv "$tmp_json" "$json_file"
            # Garante permissões corretas (994 é o uid do usuário node/openclaw na imagem)
@@ -1280,25 +1347,49 @@ setup_openclaw() {
 # --- Acesso ao Shell ---
 
 enter_shell() {
-    log_info "Tentando acessar o shell do container OpenClaw..."
+    log_info "Preparando ambiente para acesso ao CLI..."
+    fix_permissions
     sync_tokens
     
-    # Tenta encontrar container local em execução
-    # Filtra por nome que contenha 'openclaw' e esteja rodando
-    local container_id=$(docker ps --filter "name=openclaw_openclaw" --filter "status=running" --format "{{.ID}}" | head -n 1)
+    # Solicitação do usuário: Reiniciar gateway para garantir tokens sincronizados
+    if [ "$1" == "--force" ]; then
+        log_info "Reiniciando Gateway para aplicar configurações de token..."
+        restart_gateway
+    fi
     
+    # Loop de espera até o container estar 'running' e saudável
+    log_info "Verificando disponibilidade do container..."
+    local container_id=""
+    local retries=0
+    
+    while [ -z "$container_id" ] && [ $retries -lt 6 ]; do
+        container_id=$(docker ps --filter "name=openclaw_openclaw" --filter "status=running" --format "{{.ID}}" | head -n 1)
+        if [ -z "$container_id" ]; then
+            echo -n "."
+            sleep 5
+            ((retries++))
+        fi
+    done
+    echo ""
+
     if [ -n "$container_id" ]; then
         log_info "Container encontrado: $container_id"
         
         echo ""
         echo -e "${BRANCO}Comandos internos disponíveis no OpenClaw:${RESET}"
-        echo -e "  - ${VERDE}openclaw onboard --install-daemon${RESET} : Executar o processo de integração"
-        echo -e "  - ${VERDE}openclaw doctor${RESET}                   : Verificação rápida do sistema"
-        echo -e "  - ${VERDE}openclaw status${RESET} + ${VERDE}health${RESET}      : Verificar integridade do gateway"
-        echo -e "  - ${VERDE}openclaw channels login --channel whatsapp${RESET} : Gera QRCode do WhatsApp"
-        echo -e "  - ${VERDE}openclaw gateway restart${RESET}          : Reinicia o gateway (útil após conectar)"
-        echo -e "  - ${VERDE}/usr/local/bin/scan_skills.sh${RESET}     : Escaneia e instala novas skills"
-        echo -e "  - ${VERDE}openclaw --help${RESET}                   : Ajuda geral do CLI"
+        echo -e "  - ${VERDE}openclaw onboard${RESET}                  : Assistente de configuração interativo"
+        echo -e "  - ${VERDE}openclaw doctor${RESET}                   : Verificação de saúde e correções rápidas"
+        echo -e "  - ${VERDE}openclaw dashboard${RESET}                : Obter URL do painel de controle"
+        echo -e "  - ${VERDE}openclaw tui${RESET}                      : Interface de Terminal (Gerenciamento Visual)"
+        echo -e "  - ${VERDE}openclaw status${RESET} / ${VERDE}health${RESET}      : Status do Gateway e Canais"
+        echo -e "  - ${VERDE}openclaw devices${RESET}                  : Gerenciar dispositivos pareados"
+        echo -e "  - ${VERDE}openclaw channels${RESET}                 : Gerenciar canais (WhatsApp, Telegram, etc)"
+        echo -e "  - ${VERDE}openclaw agents${RESET}                   : Gerenciar agentes isolados"
+        echo -e "  - ${VERDE}openclaw skills${RESET}                   : Gerenciar skills (plugins)"
+        echo -e "  - ${VERDE}openclaw logs${RESET}                     : Ver logs do gateway"
+        echo -e "  - ${VERDE}openclaw gateway restart${RESET}          : Reinicia o serviço do gateway"
+        echo -e "  - ${VERDE}openclaw update${RESET}                   : Atualizar CLI e componentes"
+        echo -e "  - ${VERDE}openclaw --help${RESET}                   : Lista completa de comandos"
         echo -e "  - ${VERDE}exit${RESET}                              : Sair do terminal"
         echo ""
         echo -e "${VERDE}Acessando container como usuário 'openclaw'...${RESET}"
@@ -1352,6 +1443,7 @@ cleanup_vps() {
     log_info "Removendo dados persistentes (/root/openclaw) e credenciais..."
     rm -rf /root/openclaw
     rm -rf /root/dados_vps
+    rm -f /root/openclaw.yaml
     
     # 4. Remover Diretório
     if [ -d "$INSTALL_DIR" ]; then
@@ -1383,7 +1475,11 @@ cleanup_vps() {
 
     if [ $errors -eq 0 ]; then
         log_success "Limpeza verificada com SUCESSO! Tudo foi removido."
-        log_info "Fechando o menu para limpar cache e estado..."
+        echo ""
+        echo -e "${AMARELO}O script será encerrado para garantir a limpeza do ambiente.${RESET}"
+        echo -e "${BRANCO}Por favor, execute o script novamente para realizar uma nova instalação limpa.${RESET}"
+        echo ""
+        log_info "Encerrando script..."
         sleep 2
         exit 0
     else
@@ -1452,7 +1548,13 @@ uninstall_docker() {
         sleep 2
         exit 0
     else
-        log_error "A desinstalação pode ter deixado resíduos. Verifique manualmente."
+        echo ""
+        echo -e "${AMARELO}O script sera finalizado para Conclusao da limpeza.${RESET}"
+        echo -e "${BRANCO}Por favor, reinicie e execute o script novamente para finalizar a limpeza.${RESET}"
+        
+        log_info "Encerrando script..."
+        sleep 2
+        exit 1
     fi
 }
 
@@ -1500,6 +1602,10 @@ populate_swarm_volumes() {
 
 run_wizard() {
     log_info "Preparando para executar o Wizard de Configuração..."
+    
+    # Garante permissões e tokens antes de iniciar
+    fix_permissions
+    sync_tokens
     
     # Valida imagem
     if [ -z "$(docker images -q watink/openclaw:latest 2> /dev/null)" ]; then
@@ -1562,7 +1668,7 @@ run_wizard() {
              local domain=""
              if [ -f "/root/dados_vps/openclaw.txt" ]; then
                  # Extrai domínio da URL
-                 domain=$(grep "URL: " /root/dados_vps/openclaw.txt | awk '{print $2}' | sed 's|http://||' | sed 's|https://||' | cut -d/ -f1)
+                 domain=$(grep -h "^URL: " /root/dados_vps/openclaw.txt | head -n 1 | awk '{print $2}' | sed 's|http://||' | sed 's|https://||' | cut -d/ -f1)
              fi
              [ -z "$domain" ] && domain="openclaw.app.localhost"
              
@@ -1649,7 +1755,8 @@ restart_gateway() {
     if docker service ps openclaw_openclaw >/dev/null 2>&1; then
          log_info "Forçando atualização do serviço (Rolling Restart)..."
          docker service update --force openclaw_openclaw
-         log_success "Serviço atualizado."
+         log_success "Serviço atualizado. Aguardando estabilização (10s)..."
+         sleep 10
     else
          log_error "Serviço openclaw_openclaw não encontrado no Swarm."
     fi
@@ -1699,7 +1806,8 @@ show_openclaw_access() {
     fi
     
     local token=$(jq -r '.gateway.auth.token // empty' "$config_file" 2>/dev/null)
-    local domain=$(grep "URL: " /root/dados_vps/openclaw.txt | awk '{print $2}' | sed 's|http://||;s|https://||')
+    # Usa ^URL: para evitar pegar 'CANVAS URL:' e head -n 1 para garantir apenas uma linha
+    local domain=$(grep -h "^URL: " /root/dados_vps/openclaw.txt | head -n 1 | awk '{print $2}' | sed 's|http://||;s|https://||')
     
     if [ -z "$domain" ]; then
         # Tenta pegar do openclaw.yaml se não estiver no txt
@@ -1920,6 +2028,10 @@ configure_gateway_mode() {
     echo -e "  1. ${VERDE}Local${RESET}  : Processamento local de mensagens (Padrão para Standalone)."
     echo -e "  2. ${VERDE}Remote${RESET} : Atua como ponte para outro servidor (Ex: Cloud/SaaS)."
     echo ""
+    
+    # Pre-checks
+    fix_permissions
+    sync_tokens
     
     # Tenta pegar container ID
     local container_id=$(docker ps --filter "name=openclaw" --format "{{.ID}}" | head -n 1)
@@ -2287,33 +2399,37 @@ tool_force_restart() {
 }
 
 # --- Menu Principal ---
-
+ 
 menu() {
     while true; do
         header
         echo -e "${BRANCO}Selecione uma opção:${RESET}"
         echo ""
-
-        # Layout 2 colunas organizado
-        printf "${AZUL}%-60s${AZUL}%-45s${RESET}\n" "--- Instalação & Configuração ---" "--- Operações Diárias ---"
-        printf "${VERDE}%2s${BRANCO} - %-55s ${VERDE}%2s${BRANCO} - %s${RESET}\n" "1" "Setup Infraestrutura (Swarm)"     "5" "Gerenciar Skills (Plugins)"
-        printf "${VERDE}%2s${BRANCO} - %-55s ${VERDE}%2s${BRANCO} - %s${RESET}\n" "2" "Deploy OpenClaw (Aplicação)"      "6" "Gerenciar Dispositivos (Pairing)"
-        printf "${VERDE}%2s${BRANCO} - %-55s ${VERDE}%2s${BRANCO} - %s${RESET}\n" "3" "Wizard de Configuração (Onboard)" "7" "Gerar QR Code WhatsApp"
-        printf "${VERDE}%2s${BRANCO} - %-55s ${VERDE}%2s${BRANCO} - %s${RESET}\n" "4" "Configurar Modo (Local/Remoto)"   "8" "Reiniciar Gateway"
-        printf "%-60s ${VERDE}%2s${BRANCO} - %s${RESET}\n" "" "9" "Atualizar OpenClaw (Interno)"
-
+ 
+        # Layout de Coluna Única (Simplificado)
+        echo -e "${AZUL}--- Configuração & Operação ---${RESET}"
+        echo -e "${VERDE} 1${BRANCO} - Setup Infraestrutura (Swarm)${RESET}"
+        echo -e "${VERDE} 2${BRANCO} - Deploy OpenClaw (Aplicação)${RESET}"
+        echo -e "${VERDE} 3${BRANCO} - Wizard de Configuração (Onboard)${RESET}"
+        echo -e "${VERDE} 4${BRANCO} - Configurar Modo (Local/Remoto)${RESET}"
+        echo -e "${VERDE} 5${BRANCO} - Acessar Terminal / CLI (Menu Avançado)${RESET}"
+        
         echo ""
-        printf "${AZUL}%-60s${AZUL}%-45s${RESET}\n" "--- Diagnóstico & Acesso ---" "--- Manutenção & Sistema ---"
-        printf "${VERDE}%2s${BRANCO} - %-55s ${VERDE}%2s${BRANCO} - %s${RESET}\n" "10" "Verificar Saúde (Doctor)"        "15" "Terminal do Container"
-        printf "${VERDE}%2s${BRANCO} - %-55s ${VERDE}%2s${BRANCO} - %s${RESET}\n" "11" "Status do Gateway"               "16" "Resetar Senha do Portainer"
-        printf "${VERDE}%2s${BRANCO} - %-55s ${VERMELHO}%2s${BRANCO} - %s${RESET}\n" "12" "Dashboard CLI"                   "17" "Limpar VPS (Remover OpenClaw)"
-        printf "${VERDE}%2s${BRANCO} - %-55s ${VERMELHO}%2s${BRANCO} - %s${RESET}\n" "13" "Ver Logs do Sistema"             "18" "Desinstalar Docker (Remover TUDO)"
-        printf "${VERDE}%2s${BRANCO} - %-55s ${VERDE}%2s${BRANCO} - %s${RESET}\n" "14" "Exibir Dados de Conexão"         "0" "Sair"
-
+        echo -e "${AZUL}--- Ferramentas & Diagnóstico ---${RESET}"
+        echo -e "${VERDE} 6${BRANCO} - Ver Logs do Sistema${RESET}"
+        echo -e "${VERDE} 7${BRANCO} - Exibir Dados de Conexão${RESET}"
+        echo -e "${VERDE} 8${BRANCO} - Resetar Senha do Portainer${RESET}"
+        
+        echo ""
+        echo -e "${AZUL}--- Limpeza ---${RESET}"
+        echo -e "${VERMELHO} 9${BRANCO} - Remover Openclaw${RESET}"
+        echo -e "${VERMELHO}10${BRANCO} - Desinstalar Docker (Remover TUDO)${RESET}"
+        echo -e "${VERDE} 0${BRANCO} - Sair${RESET}"
+ 
         echo ""
         echo -en "${AMARELO}Opção: ${RESET}"
         read -r OPCAO
-
+ 
         case $OPCAO in
             1)
                 header
@@ -2337,65 +2453,28 @@ menu() {
                 read -p "Pressione ENTER para continuar..."
                 ;;
             5)
-                check_wizard_status || { read -p "Pressione ENTER para continuar..."; continue; }
-                manage_skills
-                ;;
-            6)
-                check_wizard_status || { read -p "Pressione ENTER para continuar..."; continue; }
-                approve_device
+                # Acesso direto ao Terminal com banner de ajuda
+                enter_shell
                 read -p "Pressione ENTER para continuar..."
                 ;;
+            6)
+                tool_view_logs
+                ;;
             7)
-                check_wizard_status || { read -p "Pressione ENTER para continuar..."; continue; }
-                generate_whatsapp_qrcode
+                show_openclaw_access
                 read -p "Pressione ENTER para continuar..."
                 ;;
             8)
-                check_root
-                restart_gateway
+                reset_portainer_password
                 read -p "Pressione ENTER para continuar..."
                 ;;
             9)
                 check_root
-                check_wizard_status || { read -p "Pressione ENTER para continuar..."; continue; }
-                update_openclaw_internal
+                cleanup_vps
                 ;;
             10)
-                run_doctor
-                read -p "Pressione ENTER para continuar..."
-                ;;
-            11)
-                run_status
-                read -p "Pressione ENTER para continuar..."
-                ;;
-            12)
-                run_dashboard
-                read -p "Pressione ENTER para continuar..."
-                ;;
-            13)
-                tool_view_logs
-                ;;
-            14)
-                show_openclaw_access
-                read -p "Pressione ENTER para continuar..."
-                ;;
-            15)
-                enter_shell
-                read -p "Pressione ENTER para continuar..."
-                ;;
-            16)
-                reset_portainer_password
-                read -p "Pressione ENTER para continuar..."
-                ;;
-            17)
-                check_root
-                cleanup_vps
-                read -p "Pressione ENTER para continuar..."
-                ;;
-            18)
                 check_root
                 uninstall_docker
-                read -p "Pressione ENTER para continuar..."
                 ;;
             0)
                 exit 0
