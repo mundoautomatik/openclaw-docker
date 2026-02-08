@@ -44,29 +44,25 @@ Acesse seu servidor via SSH como `root` e execute o comando abaixo:
 rm -rf SetupOpenclaw.sh && curl -sSL https://raw.githubusercontent.com/alltomatos/openclaw-docker/main/SetupOpenclaw.sh -o SetupOpenclaw.sh && chmod +x SetupOpenclaw.sh && ./SetupOpenclaw.sh
 ```
 
-![Setup OpenClaw Menu](./imagem/setup1.5.0.png)
+![Setup OpenClaw Menu](./imagem/setup2.9.5.png)
 
-O menu interativo (v2.1.0+) facilita o gerenciamento do ambiente:
+O menu interativo (v2.9.5+) facilita o gerenciamento do ambiente:
 
-**Instalação & Configuração**
+**Configuração & Operação**
 1.  **Setup Infraestrutura (Swarm)**: Opção recomendada ("Zero to Hero"). Instala Docker, Swarm, Traefik e Portainer.
 2.  **Deploy OpenClaw (Aplicação)**: Gera a configuração e faz o deploy do OpenClaw no cluster.
 3.  **Wizard de Configuração (Onboard)**: Executa o assistente oficial de configuração (Onboarding).
 4.  **Configurar Modo (Local/Remoto)**: Ajusta o modo de operação do Gateway.
+5.  **Acessar Terminal / CLI**: Menu avançado com acesso direto a ferramentas internas (`openclaw doctor`, `dashboard`, etc).
 
-**Operações Diárias**
-5.  **Gerenciar Skills (Plugins)**: Menu dedicado para adicionar e escanear plugins/skills.
-6.  **Gerenciar Dispositivos (Pairing)**: Interface interativa para listar e aprovar novos dispositivos.
-7.  **Gerar QR Code WhatsApp**: Atalho rápido para conectar seu WhatsApp.
-8.  **Reiniciar Gateway**: Reinicia o serviço de gateway.
-9.  **Atualizar OpenClaw (Interno)**: Atualiza a imagem e reinicia o serviço.
+**Ferramentas & Diagnóstico**
+6.  **Ver Logs do Sistema**: Visualize logs do OpenClaw, Portainer ou Traefik diretamente no menu.
+7.  **Exibir Dados de Conexão**: Mostra URLs e Tokens de acesso.
+8.  **Resetar Senha do Portainer**: Utilitário para recuperar acesso administrativo.
 
-**Diagnóstico & Manutenção**
-- **Verificar Saúde (Doctor)**: Diagnóstico completo do ambiente.
-- **Ver Logs de Serviço**: Visualize logs do OpenClaw, Portainer ou Traefik diretamente no menu.
-- **Resetar Senha do Portainer**: Utilitário para recuperar acesso administrativo.
-- **Terminal do Container**: Acesso shell direto para manutenção avançada.
-- **Limpar VPS / Desinstalar Docker**: Opções destrutivas para resetar o ambiente.
+**Limpeza**
+9.  **Remover OpenClaw**: Remove a stack e dados da aplicação.
+10. **Desinstalar Docker**: Remove completamente o Docker e todos os dados (limpeza total).
 
 ### 🌟 Destaque: Instalação Completa (Opção 1)
 Esta opção transforma um VPS vazio em um ambiente de produção completo em minutos.
